@@ -18,17 +18,18 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# Metro
+# Metro & Logs
 .metro-health-check*
-
-# debug
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# macOS & System
 .DS_Store
 *.pem
+.claude/
+.system_generated/
 
 # local env files
 .env*.local
