@@ -16,6 +16,8 @@ import {
   PieChart as PieIcon,
   Flame,
   Info,
+  BookOpen,
+  Plus,
 } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
@@ -23,6 +25,7 @@ import { MacroLog } from '../types/database';
 import { getMacroLog, saveMacroLog } from '../db/database';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
+import { FoodCatalogModal } from '../components/macros/FoodCatalogModal';
 
 interface MacroScreenProps {
   db: SQLite.SQLiteDatabase;
@@ -43,7 +46,7 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
   const [fat, setFat] = useState<string>('');
   const [actualFood, setActualFood] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [isFoodModalVisible, setIsFoodModalVisible] = useState(false);
 
   // Load existing macro entry for selectedDate
   const loadData = useCallback(async () => {
@@ -62,7 +65,6 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
         setFat('');
         setActualFood('');
       }
-      setHasLoaded(true);
     } catch (e: any) {
       console.error(e);
       onShowToast('error', `Failed to load macros: ${e.message}`);
@@ -84,9 +86,29 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
   const cPct = totalMacroGrams > 0 ? Math.round((cVal / totalMacroGrams) * 100) : 0;
   const fPct = totalMacroGrams > 0 ? Math.round((fVal / totalMacroGrams) * 100) : 0;
 
-  // Auto-fill calculated calories if calories field is empty
   const handleAutoFillCalories = () => {
     setCalories(String(Math.round(calcCalories)));
+  };
+
+  const handleAddFoodFromCatalog = (
+    foodName: string,
+    fCalories: number,
+    fProtein: number,
+    fCarbs: number,
+    fFat: number
+  ) => {
+    const nextP = (parseFloat(protein) || 0) + fProtein;
+    const nextC = (parseFloat(carbs) || 0) + fCarbs;
+    const nextF = (parseFloat(fat) || 0) + fFat;
+    const nextCal = (parseInt(calories, 10) || 0) + fCalories;
+
+    setProtein(String(Math.round(nextP * 10) / 10));
+    setCarbs(String(Math.round(nextC * 10) / 10));
+    setFat(String(Math.round(nextF * 10) / 10));
+    setCalories(String(nextCal));
+
+    setActualFood((prev) => (prev ? `${prev}\n• ${foodName}` : `• ${foodName}`));
+    onShowToast('success', `Added ${foodName}! (+${fProtein}g protein)`);
   };
 
   const handleSave = async () => {
@@ -167,9 +189,19 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
           </View>
         </Card>
 
-        {/* Macro Inputs Card */}
+        {/* Macro Inputs Card with Food Catalog Shortcut */}
         <Card style={[styles.inputsCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.text }]}>Macro Targets / Actuals</Text>
+          <View style={styles.cardHeaderRow}>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Macro Targets / Actuals</Text>
+            <TouchableOpacity
+              style={[styles.foodCatalogBtn, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
+              onPress={() => setIsFoodModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <BookOpen size={14} color={colors.primary} />
+              <Text style={[styles.foodCatalogBtnText, { color: colors.primary }]}>Food Database</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Calories Input */}
           <View style={styles.inputGroup}>
@@ -267,6 +299,14 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
           style={styles.saveBtn}
         />
       </ScrollView>
+
+      {/* Offline Custom Food Database Modal */}
+      <FoodCatalogModal
+        visible={isFoodModalVisible}
+        db={db}
+        onClose={() => setIsFoodModalVisible(false)}
+        onAddFoodToLog={handleAddFoodFromCatalog}
+      />
     </KeyboardAvoidingView>
   );
 };
@@ -352,10 +392,29 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     borderWidth: 1,
   },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
   cardTitle: {
     ...typography.titleSmall,
     fontSize: 15,
-    marginBottom: spacing.md,
+  },
+  foodCatalogBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+  },
+  foodCatalogBtnText: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '800',
   },
   inputGroup: {
     marginBottom: spacing.md,

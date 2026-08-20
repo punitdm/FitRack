@@ -35,12 +35,24 @@ Zero cloud dependencies. Zero logins required. 100% of your data stays on your d
 - **🔗 Superset Pairing**:
   - Long-press on an exercise card or tap the link icon to select a partner exercise.
   - Groups them into a unified Superset card with neon accents and unlink controls.
-- **📄 Copy Previous Workout**:
-  - One-tap button on empty days to instantly duplicate the exercise structure from your last recorded session.
+- **📅 Interactive "Copy from Date" Calendar Picker**:
+  - Tapping "Copy from Date" opens a past session calendar/list.
+  - Preview all exercises and sets from that day with **checkboxes (all selected by default)**.
+  - Selectively uncheck any sets you want to skip and copy the rest in 1 tap.
+- **📋 Workout Routines & Splits Engine**:
+  - Save custom routines (*Push, Pull, Legs, Upper, Lower, Full Body*).
+  - 1-tap launch into today's workout with pre-filled target exercises, sets, and weights.
+- **🏋️ Plate & Warm-Up Calculator**:
+  - Visual barbell plate sleeve showing exact plates to load on each side (20kg / 15kg bar + 25kg, 20kg, 15kg, 10kg, 5kg, 2.5kg, 1.25kg plates).
+  - Automated 4-tier warm-up pyramid generator (`Bar × 10` $\rightarrow$ `50% × 5` $\rightarrow$ `70% × 3` $\rightarrow$ `90% × 1`).
 
 ---
 
-### 3. 📊 Analytics & Rep-Max Records
+### 3. 📊 Analytics, Progression Graphs & Records
+- **📈 Single-Exercise Deep-Dive Progression Charts**:
+  - Interactive SVG line charts for Estimated 1RM (Epley formula), Max Weight, Workout Volume, and Max Reps.
+  - Range filters: `1m`, `3m`, `6m`, `1y`, `All Time`.
+  - Chronological history log list with individual set details and notes.
 - **🍩 Category Breakdown & Donut Chart**:
   - Interactive SVG Donut chart displaying muscle group distribution.
   - Filterable by **Metric** (*Sets* vs *Volume*) and **Period** (*Week*, *Month*, *Year*, *All Time*).
@@ -53,11 +65,11 @@ Zero cloud dependencies. Zero logins required. 100% of your data stays on your d
 
 ---
 
-### 4. 🥗 Macro & Nutrition Tracker
-- Track Daily Calories, Protein (g), Carbs (g), and Fat (g).
-- Dynamic macro ratio progress bar with percentage breakdowns.
+### 4. 🥗 Offline Custom Food Database & Macro Tracker
+- **Offline Food Catalog**: Search pre-seeded and custom-created foods (*Chicken Breast, Eggs, Oats, Salmon, Whey Protein, Rice, etc.*).
+- **Portion & Gram Multiplier**: Enter grams (e.g. `150g`) to automatically compute exact Calories, Protein, Carbs, and Fats.
+- Track Daily Calories, Protein (g), Carbs (g), and Fat (g) with macro ratio progress bars.
 - Meal notes and food journal input.
-- Automatic calorie computation helper.
 
 ---
 

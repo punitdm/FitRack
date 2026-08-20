@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Plus, Trash2, TrendingUp, Link2, Unlink } from 'lucide-react-native';
+import { Plus, Trash2, TrendingUp, Link2, Unlink, Info } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
-import { ExerciseWithLogs, ExerciseLog } from '../../types/database';
+import { ExerciseWithLogs, ExerciseLog, Exercise } from '../../types/database';
 import { SetRow } from './SetRow';
 import { Card } from '../common/Card';
 
@@ -14,6 +14,7 @@ interface ExerciseCardProps {
   onRemoveExercise: (exerciseId: number) => void;
   onStartSupersetPairing?: (exerciseId: number) => void;
   onUnlinkSuperset?: (exerciseId: number) => void;
+  onOpenDetail?: (exercise: Exercise) => void;
   isPairingMode?: boolean;
   isPairingSource?: boolean;
   onSelectForPairing?: (exerciseId: number) => void;
@@ -27,6 +28,7 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
   onRemoveExercise,
   onStartSupersetPairing,
   onUnlinkSuperset,
+  onOpenDetail,
   isPairingMode = false,
   isPairingSource = false,
   onSelectForPairing,
@@ -35,7 +37,6 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
   const { exercise, logs, previousSetInfo, supersetId, supersetPartnerName } = item;
   const categoryColor = colors.categories[exercise.category] || colors.categories.Custom;
 
-  // Format previous history info
   let prevSummary = '';
   if (previousSetInfo) {
     if (exercise.tracking_type === 'weight_reps') {
@@ -110,7 +111,11 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
 
         {/* Exercise Header */}
         <View style={styles.headerRow}>
-          <View style={styles.titleInfo}>
+          <TouchableOpacity
+            style={styles.titleInfo}
+            onPress={() => onOpenDetail && onOpenDetail(exercise)}
+            activeOpacity={0.7}
+          >
             <View style={styles.categoryBadgeRow}>
               <View
                 style={[
@@ -127,8 +132,11 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
                 </View>
               )}
             </View>
-            <Text style={[styles.exerciseName, { color: colors.text }]}>{exercise.name}</Text>
-          </View>
+            <View style={styles.nameRow}>
+              <Text style={[styles.exerciseName, { color: colors.text }]}>{exercise.name}</Text>
+              <Info size={14} color={colors.textMuted} style={{ marginLeft: 4 }} />
+            </View>
+          </TouchableOpacity>
 
           {/* Action buttons */}
           <View style={styles.headerActions}>
@@ -311,6 +319,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '600',
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   exerciseName: {
     ...typography.titleSmall,

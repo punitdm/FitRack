@@ -27,9 +27,13 @@ import {
   HydrationLog,
   WeeklyStreakInfo,
   HomeDashboardSummary,
+  WorkoutTemplate,
+  TemplateExerciseWithDetails,
+  CustomFood,
+  ExerciseProgressionPoint,
 } from '../types/database';
-import { PRESEEDED_EXERCISES } from './seedData';
-import { normalizeDateString, getTodayISO } from '../utils/dateUtils';
+import { PRESEEDED_EXERCISES, PRESEEDED_ROUTINES, PRESEEDED_FOODS } from './seedData';
+import { normalizeDateString, getTodayISO, formatShortDate } from '../utils/dateUtils';
 
 export const DB_NAME = 'fitrack.db';
 
@@ -43,7 +47,7 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 /**
- * Initializes database tables, creates performance indexes, and seeds standard exercises.
+ * Initializes database tables, creates performance indexes, and seeds standard exercises, routines, and foods.
  */
 export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON;');
@@ -131,11 +135,44 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     );
   `);
 
-  // 7. app_settings (for theme mode, accent, etc.)
+  // 7. app_settings
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+  `);
+
+  // 8. workout_templates & template_exercises
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS workout_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category TEXT DEFAULT 'General',
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS template_exercises (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id INTEGER NOT NULL REFERENCES workout_templates(id) ON DELETE CASCADE,
+      exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+      order_index INTEGER NOT NULL,
+      target_sets INTEGER DEFAULT 3,
+      target_reps INTEGER DEFAULT 10,
+      target_weight REAL DEFAULT 0
+    );
+  `);
+
+  // 9. custom_foods
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS custom_foods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      serving_size_g REAL DEFAULT 100,
+      calories INTEGER NOT NULL,
+      protein REAL NOT NULL,
+      carbs REAL NOT NULL,
+      fat REAL NOT NULL
     );
   `);
 
@@ -147,15 +184,53 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_logs(date);
     CREATE INDEX IF NOT EXISTS idx_hydration_date ON hydration_logs(date);
     CREATE INDEX IF NOT EXISTS idx_stats_date ON body_stats(date);
+    CREATE INDEX IF NOT EXISTS idx_tpl_ex ON template_exercises(template_id);
   `);
 
-  // Seed standard catalog if empty
+  // Seed standard exercises if empty
   const countRow = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM exercises');
   if (!countRow || countRow.count === 0) {
     for (const ex of PRESEEDED_EXERCISES) {
       await db.runAsync(
         'INSERT OR IGNORE INTO exercises (name, category, tracking_type, is_custom) VALUES (?, ?, ?, 0)',
         [ex.name, ex.category, ex.tracking_type]
+      );
+    }
+  }
+
+  // Seed standard routines if empty
+  const tplCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM workout_templates');
+  if (!tplCount || tplCount.count === 0) {
+    for (const r of PRESEEDED_ROUTINES) {
+      const res = await db.runAsync(
+        'INSERT INTO workout_templates (name, category, notes) VALUES (?, ?, ?)',
+        [r.name, r.category, r.notes]
+      );
+      const tplId = res.lastInsertRowId;
+      for (let i = 0; i < r.exercises.length; i++) {
+        const item = r.exercises[i];
+        const ex = await db.getFirstAsync<{ id: number }>(
+          'SELECT id FROM exercises WHERE LOWER(name) = LOWER(?)',
+          [item.name]
+        );
+        if (ex) {
+          await db.runAsync(
+            `INSERT INTO template_exercises (template_id, exercise_id, order_index, target_sets, target_reps, target_weight)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [tplId, ex.id, i, item.target_sets, item.target_reps, item.target_weight]
+          );
+        }
+      }
+    }
+  }
+
+  // Seed standard foods if empty
+  const foodCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM custom_foods');
+  if (!foodCount || foodCount.count === 0) {
+    for (const f of PRESEEDED_FOODS) {
+      await db.runAsync(
+        'INSERT OR IGNORE INTO custom_foods (name, serving_size_g, calories, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?)',
+        [f.name, f.serving_size_g, f.calories, f.protein, f.carbs, f.fat]
       );
     }
   }
@@ -288,10 +363,10 @@ export async function getExerciseLogsForSession(
   sessionDate: string
 ): Promise<ExerciseWithLogs[]> {
   const logs = await db.getAllAsync<
-    ExerciseLog & { name: string; category: string; tracking_type: TrackingType }
+    ExerciseLog & { exercise_name: string; exercise_category: string; tracking_type: TrackingType; is_custom: number }
   >(
     `
-    SELECT el.*, e.name as exercise_name, e.category as exercise_category, e.tracking_type as tracking_type
+    SELECT el.*, e.name as exercise_name, e.category as exercise_category, e.tracking_type as tracking_type, e.is_custom as is_custom
     FROM exercise_logs el
     JOIN exercises e ON el.exercise_id = e.id
     WHERE el.session_id = ?
@@ -310,6 +385,7 @@ export async function getExerciseLogsForSession(
           name: log.exercise_name || 'Exercise',
           category: log.exercise_category || 'General',
           tracking_type: log.tracking_type || 'weight_reps',
+          is_custom: log.is_custom || 0,
         },
         logs: [],
         supersetId: log.superset_id || null,
@@ -486,66 +562,368 @@ export async function unlinkExerciseFromSuperset(
   );
 }
 
-// ---------------- COPY PREVIOUS WORKOUT ----------------
+// ---------------- ADVANCED WORKOUT COPY (SELECTIVE FROM ANY DATE) ----------------
 
-export async function copyPreviousWorkout(
+export interface PastWorkoutSummary {
+  date: string;
+  sessionId: number;
+  totalSets: number;
+  exercises: {
+    exerciseId: number;
+    exerciseName: string;
+    category: string;
+    sets: {
+      id: number;
+      setNumber: number;
+      weightKg: number;
+      reps: number;
+      distanceVal?: number;
+      timeDuration?: string;
+      difficulty?: string | null;
+      comment?: string | null;
+    }[];
+  }[];
+}
+
+export async function getPastWorkoutsList(
   db: SQLite.SQLiteDatabase,
-  targetDate: string
-): Promise<{ success: boolean; message: string }> {
-  // Find most recent prior session with logs
-  const prevSession = await db.getFirstAsync<{ id: number; date: string }>(
-    `
-    SELECT ws.id, ws.date
+  limit: number = 30,
+  beforeDate?: string
+): Promise<PastWorkoutSummary[]> {
+  const query = `
+    SELECT DISTINCT ws.id as session_id, ws.date
     FROM workout_sessions ws
     JOIN exercise_logs el ON ws.id = el.session_id
-    WHERE ws.date < ?
-    GROUP BY ws.id
+    ${beforeDate ? 'WHERE ws.date <= ?' : ''}
     ORDER BY ws.date DESC
-    LIMIT 1
-  `,
-    [targetDate]
-  );
+    LIMIT ?
+  `;
+  const params = beforeDate ? [beforeDate, limit] : [limit];
+  const sessions = await db.getAllAsync<{ session_id: number; date: string }>(query, params);
 
-  if (!prevSession) {
-    return { success: false, message: 'No prior workout found to copy.' };
+  const results: PastWorkoutSummary[] = [];
+
+  for (const s of sessions) {
+    const logs = await db.getAllAsync<{
+      id: number;
+      exercise_id: number;
+      name: string;
+      category: string;
+      set_number: number;
+      weight_kg: number;
+      reps: number;
+      distance_val: number;
+      time_duration: string;
+      difficulty: string | null;
+      comment: string | null;
+    }>(
+      `
+      SELECT el.id, el.exercise_id, e.name, e.category, el.set_number, el.weight_kg, el.reps,
+             el.distance_val, el.time_duration, el.difficulty, el.comment
+      FROM exercise_logs el
+      JOIN exercises e ON el.exercise_id = e.id
+      WHERE el.session_id = ?
+      ORDER BY el.exercise_id ASC, el.set_number ASC
+    `,
+      [s.session_id]
+    );
+
+    const exMap = new Map<
+      number,
+      {
+        exerciseId: number;
+        exerciseName: string;
+        category: string;
+        sets: any[];
+      }
+    >();
+
+    for (const log of logs) {
+      if (!exMap.has(log.exercise_id)) {
+        exMap.set(log.exercise_id, {
+          exerciseId: log.exercise_id,
+          exerciseName: log.name,
+          category: log.category,
+          sets: [],
+        });
+      }
+      exMap.get(log.exercise_id)!.sets.push({
+        id: log.id,
+        setNumber: log.set_number,
+        weightKg: log.weight_kg,
+        reps: log.reps,
+        distanceVal: log.distance_val,
+        timeDuration: log.time_duration,
+        difficulty: log.difficulty,
+        comment: log.comment,
+      });
+    }
+
+    results.push({
+      date: s.date,
+      sessionId: s.session_id,
+      totalSets: logs.length,
+      exercises: Array.from(exMap.values()),
+    });
   }
 
+  return results;
+}
+
+export async function copySelectedSetsToDate(
+  db: SQLite.SQLiteDatabase,
+  targetDate: string,
+  selectedSets: {
+    exerciseId: number;
+    weightKg: number;
+    reps: number;
+    distanceVal?: number;
+    distanceUnit?: string;
+    timeDuration?: string;
+    difficulty?: string | null;
+    comment?: string | null;
+  }[]
+): Promise<number> {
   const targetSession = await getOrCreateSession(db, targetDate);
 
-  // Get prior logs
-  const priorLogs = await db.getAllAsync<ExerciseLog>(
-    'SELECT * FROM exercise_logs WHERE session_id = ? ORDER BY id ASC',
-    [prevSession.id]
-  );
+  // Group by exercise to assign correct set numbers
+  const countMap: Record<number, number> = {};
 
-  for (const log of priorLogs) {
-    await db.runAsync(
-      `
-      INSERT INTO exercise_logs (
-        session_id, exercise_id, set_number, weight_kg, reps,
-        distance_val, distance_unit, time_duration, difficulty, comment, superset_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      [
-        targetSession.id,
-        log.exercise_id,
-        log.set_number,
-        log.weight_kg ?? 0,
-        log.reps ?? 0,
-        log.distance_val ?? 0,
-        log.distance_unit ?? 'km',
-        log.time_duration ?? '00:00:00',
-        log.difficulty ?? null,
-        log.comment ?? null,
-        log.superset_id ?? null,
-      ]
+  for (const set of selectedSets) {
+    countMap[set.exerciseId] = (countMap[set.exerciseId] || 0) + 1;
+    await addExerciseSet(
+      db,
+      targetSession.id,
+      set.exerciseId,
+      countMap[set.exerciseId],
+      set.weightKg || 0,
+      set.reps || 0,
+      set.distanceVal || 0,
+      set.distanceUnit || 'km',
+      set.timeDuration || '00:00:00',
+      set.difficulty || null,
+      set.comment || null,
+      null
     );
   }
 
-  return {
-    success: true,
-    message: `Copied ${priorLogs.length} sets from ${prevSession.date}`,
-  };
+  return selectedSets.length;
+}
+
+// ---------------- WORKOUT ROUTINES & TEMPLATES ----------------
+
+export async function getWorkoutTemplates(db: SQLite.SQLiteDatabase): Promise<WorkoutTemplate[]> {
+  const templates = await db.getAllAsync<{ id: number; name: string; category: string; notes: string }>(
+    'SELECT * FROM workout_templates ORDER BY id ASC'
+  );
+
+  const results: WorkoutTemplate[] = [];
+
+  for (const t of templates) {
+    const exercises = await db.getAllAsync<TemplateExerciseWithDetails>(
+      `
+      SELECT te.*, e.name as exercise_name, e.category as exercise_category, e.tracking_type as tracking_type
+      FROM template_exercises te
+      JOIN exercises e ON te.exercise_id = e.id
+      WHERE te.template_id = ?
+      ORDER BY te.order_index ASC
+    `,
+      [t.id]
+    );
+
+    results.push({
+      ...t,
+      exercisesCount: exercises.length,
+      exercises,
+    });
+  }
+
+  return results;
+}
+
+export async function createWorkoutTemplate(
+  db: SQLite.SQLiteDatabase,
+  name: string,
+  category: string = 'General',
+  notes: string = '',
+  exercises: { exerciseId: number; targetSets: number; targetReps: number; targetWeight: number }[] = []
+): Promise<number> {
+  const res = await db.runAsync(
+    'INSERT INTO workout_templates (name, category, notes) VALUES (?, ?, ?)',
+    [name.trim(), category.trim() || 'General', notes.trim()]
+  );
+  const tplId = res.lastInsertRowId;
+
+  for (let i = 0; i < exercises.length; i++) {
+    const item = exercises[i];
+    await db.runAsync(
+      `INSERT INTO template_exercises (template_id, exercise_id, order_index, target_sets, target_reps, target_weight)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [tplId, item.exerciseId, i, item.targetSets, item.targetReps, item.targetWeight]
+    );
+  }
+
+  return tplId;
+}
+
+export async function deleteWorkoutTemplate(db: SQLite.SQLiteDatabase, templateId: number): Promise<void> {
+  await db.runAsync('DELETE FROM workout_templates WHERE id = ?', [templateId]);
+}
+
+export async function loadTemplateIntoSession(
+  db: SQLite.SQLiteDatabase,
+  templateId: number,
+  targetDate: string = getTodayISO()
+): Promise<number> {
+  const targetSession = await getOrCreateSession(db, targetDate);
+  const exercises = await db.getAllAsync<{
+    exercise_id: number;
+    target_sets: number;
+    target_reps: number;
+    target_weight: number;
+  }>('SELECT * FROM template_exercises WHERE template_id = ? ORDER BY order_index ASC', [templateId]);
+
+  let totalSetsAdded = 0;
+
+  for (const ex of exercises) {
+    for (let s = 1; s <= (ex.target_sets || 3); s++) {
+      await addExerciseSet(
+        db,
+        targetSession.id,
+        ex.exercise_id,
+        s,
+        ex.target_weight || 0,
+        ex.target_reps || 10,
+        0,
+        'km',
+        '00:00:00',
+        null,
+        null,
+        null
+      );
+      totalSetsAdded++;
+    }
+  }
+
+  return totalSetsAdded;
+}
+
+// ---------------- EXERCISE PROGRESSION GRAPHS ----------------
+
+export async function getExerciseProgressionData(
+  db: SQLite.SQLiteDatabase,
+  exerciseId: number,
+  metric: '1rm' | 'max_weight' | 'volume' | 'max_reps' = '1rm',
+  timeRange: '1m' | '3m' | '6m' | '1y' | 'all' = '1y'
+): Promise<ExerciseProgressionPoint[]> {
+  let startDate = '1970-01-01';
+  const now = new Date();
+
+  if (timeRange === '1m') startDate = format(subMonths(now, 1), 'yyyy-MM-dd');
+  else if (timeRange === '3m') startDate = format(subMonths(now, 3), 'yyyy-MM-dd');
+  else if (timeRange === '6m') startDate = format(subMonths(now, 6), 'yyyy-MM-dd');
+  else if (timeRange === '1y') startDate = format(subYears(now, 1), 'yyyy-MM-dd');
+
+  const rows = await db.getAllAsync<{
+    date: string;
+    weight_kg: number;
+    reps: number;
+    volume: number;
+  }>(
+    `
+    SELECT 
+      ws.date,
+      el.weight_kg,
+      el.reps,
+      (el.weight_kg * el.reps) as volume
+    FROM exercise_logs el
+    JOIN workout_sessions ws ON el.session_id = ws.id
+    WHERE el.exercise_id = ? AND ws.date >= ? AND el.weight_kg > 0
+    ORDER BY ws.date ASC, el.set_number ASC
+  `,
+    [exerciseId, startDate]
+  );
+
+  // Group by date
+  const dateMap = new Map<string, { weight: number; reps: number; volume: number; epley1rm: number }>();
+
+  for (const r of rows) {
+    const epley = r.weight_kg * (1 + (r.reps || 1) / 30);
+
+    if (!dateMap.has(r.date)) {
+      dateMap.set(r.date, {
+        weight: r.weight_kg,
+        reps: r.reps,
+        volume: r.volume,
+        epley1rm: Math.round(epley * 10) / 10,
+      });
+    } else {
+      const cur = dateMap.get(r.date)!;
+      cur.volume += r.volume;
+      if (r.weight_kg > cur.weight) cur.weight = r.weight_kg;
+      if (r.reps > cur.reps) cur.reps = r.reps;
+      if (epley > cur.epley1rm) cur.epley1rm = Math.round(epley * 10) / 10;
+    }
+  }
+
+  const result: ExerciseProgressionPoint[] = [];
+
+  for (const [date, data] of dateMap.entries()) {
+    let val = data.epley1rm;
+    if (metric === 'max_weight') val = data.weight;
+    else if (metric === 'volume') val = data.volume;
+    else if (metric === 'max_reps') val = data.reps;
+
+    result.push({
+      date,
+      value: val,
+      weight: data.weight,
+      reps: data.reps,
+      displayDate: formatShortDate(date),
+    });
+  }
+
+  return result;
+}
+
+// ---------------- CUSTOM FOOD DATABASE ----------------
+
+export async function getCustomFoods(db: SQLite.SQLiteDatabase, query: string = ''): Promise<CustomFood[]> {
+  if (!query.trim()) {
+    return await db.getAllAsync<CustomFood>('SELECT * FROM custom_foods ORDER BY name ASC');
+  }
+  return await db.getAllAsync<CustomFood>(
+    'SELECT * FROM custom_foods WHERE LOWER(name) LIKE ? ORDER BY name ASC',
+    [`%${query.toLowerCase().trim()}%`]
+  );
+}
+
+export async function addCustomFood(
+  db: SQLite.SQLiteDatabase,
+  name: string,
+  servingSizeG: number = 100,
+  calories: number = 0,
+  protein: number = 0,
+  carbs: number = 0,
+  fat: number = 0
+): Promise<number> {
+  const res = await db.runAsync(
+    `INSERT INTO custom_foods (name, serving_size_g, calories, protein, carbs, fat)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       serving_size_g = excluded.serving_size_g,
+       calories = excluded.calories,
+       protein = excluded.protein,
+       carbs = excluded.carbs,
+       fat = excluded.fat
+    `,
+    [name.trim(), servingSizeG, calories, protein, carbs, fat]
+  );
+  return res.lastInsertRowId;
+}
+
+export async function deleteCustomFood(db: SQLite.SQLiteDatabase, foodId: number): Promise<void> {
+  await db.runAsync('DELETE FROM custom_foods WHERE id = ?', [foodId]);
 }
 
 // ---------------- CALENDAR MULTI-COLOR CATEGORY DOTS ----------------
@@ -603,7 +981,7 @@ export interface ExerciseRepMaxRow {
   exerciseId: number;
   exerciseName: string;
   category: string;
-  repMaxes: Record<number, { weightKg: number; date: string } | null>; // 1 -> { weight, date }
+  repMaxes: Record<number, { weightKg: number; date: string } | null>;
 }
 
 export async function getRepMaxMatrix(
@@ -780,6 +1158,34 @@ export async function getCategoryBreakdown(
   };
 }
 
+// ---------------- EXERCISE DETAIL HISTORY & CHART DATA ----------------
+
+export async function getExerciseHistoryLogs(
+  db: SQLite.SQLiteDatabase,
+  exerciseId: number
+): Promise<{ date: string; logs: ExerciseLog[] }[]> {
+  const rows = await db.getAllAsync<ExerciseLog & { date: string }>(
+    `
+    SELECT el.*, ws.date
+    FROM exercise_logs el
+    JOIN workout_sessions ws ON el.session_id = ws.id
+    WHERE el.exercise_id = ?
+    ORDER BY ws.date DESC, el.set_number ASC
+  `,
+    [exerciseId]
+  );
+
+  const map = new Map<string, ExerciseLog[]>();
+  for (const row of rows) {
+    if (!map.has(row.date)) {
+      map.set(row.date, []);
+    }
+    map.get(row.date)!.push(row);
+  }
+
+  return Array.from(map.entries()).map(([date, logs]) => ({ date, logs }));
+}
+
 // ---------------- APP SETTINGS (THEME & PREFERENCES) ----------------
 
 export async function getAppSetting(
@@ -807,34 +1213,6 @@ export async function setAppSetting(
   `,
     [key, value]
   );
-}
-
-// ---------------- EXERCISE DETAIL HISTORY & CHART DATA ----------------
-
-export async function getExerciseHistoryLogs(
-  db: SQLite.SQLiteDatabase,
-  exerciseId: number
-): Promise<{ date: string; logs: ExerciseLog[] }[]> {
-  const rows = await db.getAllAsync<ExerciseLog & { date: string }>(
-    `
-    SELECT el.*, ws.date
-    FROM exercise_logs el
-    JOIN workout_sessions ws ON el.session_id = ws.id
-    WHERE el.exercise_id = ?
-    ORDER BY ws.date DESC, el.set_number ASC
-  `,
-    [exerciseId]
-  );
-
-  const map = new Map<string, ExerciseLog[]>();
-  for (const row of rows) {
-    if (!map.has(row.date)) {
-      map.set(row.date, []);
-    }
-    map.get(row.date)!.push(row);
-  }
-
-  return Array.from(map.entries()).map(([date, logs]) => ({ date, logs }));
 }
 
 // ---------------- HYDRATION ----------------
@@ -1170,27 +1548,6 @@ export async function getPersonalRecords(db: SQLite.SQLiteDatabase): Promise<Per
   });
 }
 
-export async function getMuscleGroupDistribution(
-  db: SQLite.SQLiteDatabase
-): Promise<{ category: string; setsCount: number; percentage: number }[]> {
-  const rows = await db.getAllAsync<{ category: string; setsCount: number }>(`
-    SELECT e.category, COUNT(el.id) as setsCount
-    FROM exercise_logs el
-    JOIN exercises e ON el.exercise_id = e.id
-    GROUP BY e.category
-    ORDER BY setsCount DESC
-  `);
-
-  const total = rows.reduce((acc, r) => acc + r.setsCount, 0);
-  if (total === 0) return [];
-
-  return rows.map((r) => ({
-    category: r.category,
-    setsCount: r.setsCount,
-    percentage: Math.round((r.setsCount / total) * 100),
-  }));
-}
-
 // ---------------- MACROS ----------------
 
 export async function getMacroLog(db: SQLite.SQLiteDatabase, date: string): Promise<MacroLog | null> {
@@ -1269,12 +1626,16 @@ export async function getDatabaseSummary(db: SQLite.SQLiteDatabase): Promise<{
   totalSets: number;
   totalMacroDays: number;
   totalBodyStatDays: number;
+  totalTemplates: number;
+  totalFoods: number;
 }> {
   const ex = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM exercises');
   const sess = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM workout_sessions');
   const sets = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM exercise_logs');
   const macros = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM macro_logs');
   const stats = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM body_stats');
+  const tpls = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM workout_templates');
+  const foods = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM custom_foods');
 
   return {
     totalExercises: ex?.c || 0,
@@ -1282,6 +1643,8 @@ export async function getDatabaseSummary(db: SQLite.SQLiteDatabase): Promise<{
     totalSets: sets?.c || 0,
     totalMacroDays: macros?.c || 0,
     totalBodyStatDays: stats?.c || 0,
+    totalTemplates: tpls?.c || 0,
+    totalFoods: foods?.c || 0,
   };
 }
 

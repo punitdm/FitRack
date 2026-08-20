@@ -16,6 +16,7 @@ import {
   X,
   Layers,
   Copy,
+  Calendar,
 } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
@@ -38,10 +39,12 @@ import {
   updateSessionNotes,
   linkExercisesAsSuperset,
   unlinkExerciseFromSuperset,
-  copyPreviousWorkout,
 } from '../db/database';
 import { ExerciseCard } from '../components/workout/ExerciseCard';
 import { AddExerciseModal } from '../components/workout/AddExerciseModal';
+import { CopyWorkoutModal } from '../components/workout/CopyWorkoutModal';
+import { RoutinesModal } from '../components/routines/RoutinesModal';
+import { ExerciseDetailModal } from '../components/workout/ExerciseDetailModal';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 
@@ -62,6 +65,10 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   const [exerciseItems, setExerciseItems] = useState<ExerciseWithLogs[]>([]);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
+  const [isCopyModalVisible, setIsCopyModalVisible] = useState(false);
+  const [isRoutinesModalVisible, setIsRoutinesModalVisible] = useState(false);
+  const [selectedExerciseForDetail, setSelectedExerciseForDetail] = useState<Exercise | null>(null);
+
   const [sessionNotes, setSessionNotes] = useState('');
   const [showNotesInput, setShowNotesInput] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -231,21 +238,6 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
     }
   };
 
-  // Copy Previous Workout
-  const handleCopyPrevious = async () => {
-    try {
-      const res = await copyPreviousWorkout(db, selectedDate);
-      if (res.success) {
-        onShowToast('success', res.message);
-        await loadData();
-      } else {
-        onShowToast('info', res.message);
-      }
-    } catch (err: any) {
-      onShowToast('error', `Failed to copy workout: ${err.message}`);
-    }
-  };
-
   // Create custom exercise
   const handleCreateCustomExercise = async (
     name: string,
@@ -347,6 +339,27 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
           </Card>
         </View>
 
+        {/* Quick Toolbar (Routines & Copy Actions) */}
+        <View style={styles.quickToolsRow}>
+          <TouchableOpacity
+            style={[styles.quickToolBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+            onPress={() => setIsRoutinesModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Layers size={15} color={colors.primary} />
+            <Text style={[styles.quickToolText, { color: colors.text }]}>Routines & Splits</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.quickToolBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+            onPress={() => setIsCopyModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Copy size={15} color={colors.secondary} />
+            <Text style={[styles.quickToolText, { color: colors.text }]}>Copy from Date</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Exercises List */}
         {exerciseItems.length > 0 ? (
           exerciseItems.map((item) => (
@@ -359,24 +372,25 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
               onRemoveExercise={handleRemoveExercise}
               onStartSupersetPairing={handleStartSupersetPairing}
               onUnlinkSuperset={handleUnlinkSuperset}
+              onOpenDetail={(ex) => setSelectedExerciseForDetail(ex)}
               isPairingMode={pairingSourceId !== null}
               isPairingSource={pairingSourceId === item.exercise.id}
               onSelectForPairing={handleSelectForPairing}
             />
           ))
         ) : (
-          /* FitNotes Empty State */
+          /* Empty State */
           <Card style={[styles.emptyCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
             <View style={[styles.emptyIconBg, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}>
               <Dumbbell size={36} color={colors.primary} />
             </View>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>Workout Log Empty</Text>
             <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              Start tracking sets for this day, or duplicate your last session.
+              Start tracking sets, load a saved routine, or copy exercises from any previous date.
             </Text>
 
             <Button
-              title="+ Start New Workout"
+              title="+ Add Exercises"
               variant="primary"
               size="lg"
               onPress={() => setIsAddModalVisible(true)}
@@ -384,12 +398,21 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
             />
 
             <Button
-              title="Copy Previous Workout"
+              title="Load Saved Routine"
+              icon={<Layers size={16} color={colors.primary} />}
+              variant="secondary"
+              size="md"
+              onPress={() => setIsRoutinesModalVisible(true)}
+              style={[styles.emptyBtn, { marginTop: spacing.xs }]}
+            />
+
+            <Button
+              title="Copy from Previous Date"
               icon={<Copy size={16} color={colors.secondary} />}
               variant="secondary"
               size="md"
-              onPress={handleCopyPrevious}
-              style={[styles.emptyBtn, { marginTop: spacing.sm }]}
+              onPress={() => setIsCopyModalVisible(true)}
+              style={[styles.emptyBtn, { marginTop: spacing.xs }]}
             />
           </Card>
         )}
@@ -434,13 +457,45 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
         )}
       </ScrollView>
 
-      {/* Add Exercise Modal (Body Part -> Exercise -> Custom) */}
+      {/* 1. Add Exercise Modal */}
       <AddExerciseModal
         visible={isAddModalVisible}
         exercises={allExercises}
         onClose={() => setIsAddModalVisible(false)}
         onSelectExercise={handleSelectExercise}
         onCreateCustomExercise={handleCreateCustomExercise}
+      />
+
+      {/* 2. Copy Workout from Date Modal */}
+      <CopyWorkoutModal
+        visible={isCopyModalVisible}
+        db={db}
+        currentDate={selectedDate}
+        onClose={() => setIsCopyModalVisible(false)}
+        onSuccess={(count) => {
+          loadData();
+          onShowToast('success', `Copied ${count} sets to today!`);
+        }}
+      />
+
+      {/* 3. Routines & Splits Modal */}
+      <RoutinesModal
+        visible={isRoutinesModalVisible}
+        db={db}
+        currentDate={selectedDate}
+        onClose={() => setIsRoutinesModalVisible(false)}
+        onStartRoutine={(name, count) => {
+          loadData();
+          onShowToast('success', `Loaded ${name} (${count} sets) into today!`);
+        }}
+      />
+
+      {/* 4. Deep-Dive Exercise Detail & Graph Modal */}
+      <ExerciseDetailModal
+        visible={selectedExerciseForDetail !== null}
+        db={db}
+        exercise={selectedExerciseForDetail}
+        onClose={() => setSelectedExerciseForDetail(null)}
       />
     </View>
   );
@@ -477,7 +532,7 @@ const styles = StyleSheet.create({
   metricsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   metricCard: {
     flex: 1,
@@ -502,11 +557,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
+  quickToolsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  quickToolBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+  },
+  quickToolText: {
+    ...typography.caption,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   emptyCard: {
     alignItems: 'center',
     paddingVertical: 36,
     paddingHorizontal: spacing.xl,
-    marginVertical: spacing.xl,
+    marginVertical: spacing.lg,
     borderRadius: borderRadius.xl,
     borderWidth: 1,
   },
