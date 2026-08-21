@@ -31,6 +31,7 @@ import {
   TemplateExerciseWithDetails,
   CustomFood,
   ExerciseProgressionPoint,
+  SupersetGroup,
 } from '../types/database';
 import { PRESEEDED_EXERCISES, PRESEEDED_ROUTINES, PRESEEDED_FOODS } from './seedData';
 import { normalizeDateString, getTodayISO, formatShortDate } from '../utils/dateUtils';
@@ -96,6 +97,18 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
   } catch {
     // Column already exists
   }
+
+  // 3b. session_supersets
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS session_supersets (
+      id TEXT PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES workout_sessions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#EF4444',
+      jump_between_exercises INTEGER DEFAULT 1,
+      disable_timer INTEGER DEFAULT 0
+    );
+  `);
 
   // 4. macro_logs
   await db.execAsync(`
@@ -370,10 +383,17 @@ export async function getExerciseLogsForSession(
     FROM exercise_logs el
     JOIN exercises e ON el.exercise_id = e.id
     WHERE el.session_id = ?
-    ORDER BY el.superset_id ASC, el.exercise_id ASC, el.set_number ASC
+    ORDER BY el.exercise_id ASC, el.set_number ASC
   `,
     [sessionId]
   );
+
+  // Fetch session supersets
+  const supersets = await getSessionSupersets(db, sessionId);
+  const ssGroupMap = new Map<string, SupersetGroup>();
+  for (const ss of supersets) {
+    ssGroupMap.set(ss.id, ss);
+  }
 
   const map = new Map<number, { exercise: Exercise; logs: ExerciseLog[]; supersetId?: string | null }>();
 
@@ -413,10 +433,15 @@ export async function getExerciseLogsForSession(
       partnerName = names.find((n) => n !== item.exercise.name) || null;
     }
 
+    const ssInfo = item.supersetId ? ssGroupMap.get(item.supersetId) : null;
+
     result.push({
       exercise: item.exercise,
       logs: item.logs,
       supersetId: item.supersetId,
+      supersetName: ssInfo ? ssInfo.name : (item.supersetId ? 'Superset' : null),
+      supersetColor: ssInfo ? ssInfo.color : (item.supersetId ? '#EF4444' : null),
+      supersetJumpBetween: ssInfo ? ssInfo.jump_between_exercises === 1 : true,
       supersetPartnerName: partnerName,
       previousSetInfo: prevInfo,
     });
@@ -527,7 +552,86 @@ export async function removeExerciseFromSession(
   ]);
 }
 
-// ---------------- SUPERSET ACTIONS ----------------
+// ---------------- SUPERSET ACTIONS & MANAGEMENT ----------------
+
+export async function getSessionSupersets(
+  db: SQLite.SQLiteDatabase,
+  sessionId: number
+): Promise<SupersetGroup[]> {
+  try {
+    const rows = await db.getAllAsync<SupersetGroup>(
+      'SELECT * FROM session_supersets WHERE session_id = ? ORDER BY id ASC',
+      [sessionId]
+    );
+    return rows || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function saveSessionSuperset(
+  db: SQLite.SQLiteDatabase,
+  superset: SupersetGroup
+): Promise<void> {
+  await db.runAsync(
+    `
+    INSERT INTO session_supersets (id, session_id, name, color, jump_between_exercises, disable_timer)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      color = excluded.color,
+      jump_between_exercises = excluded.jump_between_exercises,
+      disable_timer = excluded.disable_timer
+  `,
+    [
+      superset.id,
+      superset.session_id,
+      superset.name,
+      superset.color,
+      superset.jump_between_exercises,
+      superset.disable_timer,
+    ]
+  );
+}
+
+export async function deleteSessionSuperset(
+  db: SQLite.SQLiteDatabase,
+  sessionId: number,
+  supersetId: string
+): Promise<void> {
+  await db.runAsync('DELETE FROM session_supersets WHERE id = ?', [supersetId]);
+  await db.runAsync(
+    'UPDATE exercise_logs SET superset_id = NULL WHERE session_id = ? AND superset_id = ?',
+    [sessionId, supersetId]
+  );
+}
+
+export async function assignExercisesToSuperset(
+  db: SQLite.SQLiteDatabase,
+  sessionId: number,
+  supersetId: string,
+  exerciseIds: number[]
+): Promise<void> {
+  for (const exId of exerciseIds) {
+    await db.runAsync(
+      'UPDATE exercise_logs SET superset_id = ? WHERE session_id = ? AND exercise_id = ?',
+      [supersetId, sessionId, exId]
+    );
+  }
+}
+
+export async function removeExercisesFromSuperset(
+  db: SQLite.SQLiteDatabase,
+  sessionId: number,
+  exerciseIds: number[]
+): Promise<void> {
+  for (const exId of exerciseIds) {
+    await db.runAsync(
+      'UPDATE exercise_logs SET superset_id = NULL WHERE session_id = ? AND exercise_id = ?',
+      [sessionId, exId]
+    );
+  }
+}
 
 export async function linkExercisesAsSuperset(
   db: SQLite.SQLiteDatabase,
@@ -535,15 +639,16 @@ export async function linkExercisesAsSuperset(
   exId1: number,
   exId2: number
 ): Promise<string> {
-  const supersetKey = `ss_${sessionId}_${Math.min(exId1, exId2)}_${Math.max(exId1, exId2)}`;
-  await db.runAsync(
-    `
-    UPDATE exercise_logs
-    SET superset_id = ?
-    WHERE session_id = ? AND (exercise_id = ? OR exercise_id = ?)
-  `,
-    [supersetKey, sessionId, exId1, exId2]
-  );
+  const supersetKey = `ss_${sessionId}_${Date.now()}`;
+  await saveSessionSuperset(db, {
+    id: supersetKey,
+    session_id: sessionId,
+    name: 'Superset',
+    color: '#EF4444',
+    jump_between_exercises: 1,
+    disable_timer: 0,
+  });
+  await assignExercisesToSuperset(db, sessionId, supersetKey, [exId1, exId2]);
   return supersetKey;
 }
 
@@ -552,14 +657,7 @@ export async function unlinkExerciseFromSuperset(
   sessionId: number,
   exerciseId: number
 ): Promise<void> {
-  await db.runAsync(
-    `
-    UPDATE exercise_logs
-    SET superset_id = NULL
-    WHERE session_id = ? AND exercise_id = ?
-  `,
-    [sessionId, exerciseId]
-  );
+  await removeExercisesFromSuperset(db, sessionId, [exerciseId]);
 }
 
 // ---------------- ADVANCED WORKOUT COPY (SELECTIVE FROM ANY DATE) ----------------
@@ -590,84 +688,89 @@ export async function getPastWorkoutsList(
   limit: number = 30,
   beforeDate?: string
 ): Promise<PastWorkoutSummary[]> {
-  const query = `
-    SELECT DISTINCT ws.id as session_id, ws.date
-    FROM workout_sessions ws
-    JOIN exercise_logs el ON ws.id = el.session_id
-    ${beforeDate ? 'WHERE ws.date <= ?' : ''}
-    ORDER BY ws.date DESC
-    LIMIT ?
-  `;
-  const params = beforeDate ? [beforeDate, limit] : [limit];
-  const sessions = await db.getAllAsync<{ session_id: number; date: string }>(query, params);
+  try {
+    const query = `
+      SELECT DISTINCT ws.id as session_id, ws.date
+      FROM workout_sessions ws
+      JOIN exercise_logs el ON ws.id = el.session_id
+      ${beforeDate ? 'WHERE ws.date <= ?' : ''}
+      ORDER BY ws.date DESC
+      LIMIT ?
+    `;
+    const params = beforeDate ? [beforeDate, limit] : [limit];
+    const sessions = await db.getAllAsync<{ session_id: number; date: string }>(query, params);
 
-  const results: PastWorkoutSummary[] = [];
+    const results: PastWorkoutSummary[] = [];
 
-  for (const s of sessions) {
-    const logs = await db.getAllAsync<{
-      id: number;
-      exercise_id: number;
-      name: string;
-      category: string;
-      set_number: number;
-      weight_kg: number;
-      reps: number;
-      distance_val: number;
-      time_duration: string;
-      difficulty: string | null;
-      comment: string | null;
-    }>(
-      `
-      SELECT el.id, el.exercise_id, e.name, e.category, el.set_number, el.weight_kg, el.reps,
-             el.distance_val, el.time_duration, el.difficulty, el.comment
-      FROM exercise_logs el
-      JOIN exercises e ON el.exercise_id = e.id
-      WHERE el.session_id = ?
-      ORDER BY el.exercise_id ASC, el.set_number ASC
-    `,
-      [s.session_id]
-    );
-
-    const exMap = new Map<
-      number,
-      {
-        exerciseId: number;
-        exerciseName: string;
+    for (const s of sessions) {
+      const logs = await db.getAllAsync<{
+        id: number;
+        exercise_id: number;
+        name: string;
         category: string;
-        sets: any[];
-      }
-    >();
+        set_number: number;
+        weight_kg: number;
+        reps: number;
+        distance_val: number;
+        time_duration: string;
+        difficulty: string | null;
+        comment: string | null;
+      }>(
+        `
+        SELECT el.id, el.exercise_id, e.name, e.category, el.set_number, el.weight_kg, el.reps,
+               el.distance_val, el.time_duration, el.difficulty, el.comment
+        FROM exercise_logs el
+        JOIN exercises e ON el.exercise_id = e.id
+        WHERE el.session_id = ?
+        ORDER BY el.exercise_id ASC, el.set_number ASC
+      `,
+        [s.session_id]
+      );
 
-    for (const log of logs) {
-      if (!exMap.has(log.exercise_id)) {
-        exMap.set(log.exercise_id, {
-          exerciseId: log.exercise_id,
-          exerciseName: log.name,
-          category: log.category,
-          sets: [],
+      const exMap = new Map<
+        number,
+        {
+          exerciseId: number;
+          exerciseName: string;
+          category: string;
+          sets: any[];
+        }
+      >();
+
+      for (const log of logs) {
+        if (!exMap.has(log.exercise_id)) {
+          exMap.set(log.exercise_id, {
+            exerciseId: log.exercise_id,
+            exerciseName: log.name,
+            category: log.category,
+            sets: [],
+          });
+        }
+        exMap.get(log.exercise_id)!.sets.push({
+          id: log.id,
+          setNumber: log.set_number,
+          weightKg: log.weight_kg,
+          reps: log.reps,
+          distanceVal: log.distance_val,
+          timeDuration: log.time_duration,
+          difficulty: log.difficulty,
+          comment: log.comment,
         });
       }
-      exMap.get(log.exercise_id)!.sets.push({
-        id: log.id,
-        setNumber: log.set_number,
-        weightKg: log.weight_kg,
-        reps: log.reps,
-        distanceVal: log.distance_val,
-        timeDuration: log.time_duration,
-        difficulty: log.difficulty,
-        comment: log.comment,
+
+      results.push({
+        date: s.date,
+        sessionId: s.session_id,
+        totalSets: logs.length,
+        exercises: Array.from(exMap.values()),
       });
     }
 
-    results.push({
-      date: s.date,
-      sessionId: s.session_id,
-      totalSets: logs.length,
-      exercises: Array.from(exMap.values()),
-    });
+    return results;
+  } catch (e) {
+    console.error('getPastWorkoutsList error:', e);
+    return [];
   }
-
-  return results;
 }
 
 export async function copySelectedSetsToDate(

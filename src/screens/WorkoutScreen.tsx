@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,56 +7,62 @@ import {
   TouchableOpacity,
   TextInput,
   RefreshControl,
+  Alert,
+  PanResponder,
 } from 'react-native';
 import {
   Plus,
   Dumbbell,
   FileText,
   Link2,
+  Trash2,
+  Check,
   X,
   Layers,
   Copy,
-  Calendar,
 } from 'lucide-react-native';
+import { addDays, subDays, format, parseISO } from 'date-fns';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
 import {
   Exercise,
   ExerciseWithLogs,
-  ExerciseLog,
   WorkoutSession,
   TrackingType,
+  SupersetGroup,
 } from '../types/database';
 import {
   getAllExercises,
   getOrCreateSession,
   getExerciseLogsForSession,
   addExerciseSet,
-  updateExerciseSet,
-  deleteExerciseSet,
   removeExerciseFromSession,
   addCustomExercise,
   updateSessionNotes,
-  linkExercisesAsSuperset,
-  unlinkExerciseFromSuperset,
+  getSessionSupersets,
 } from '../db/database';
 import { ExerciseCard } from '../components/workout/ExerciseCard';
 import { AddExerciseModal } from '../components/workout/AddExerciseModal';
 import { CopyWorkoutModal } from '../components/workout/CopyWorkoutModal';
 import { RoutinesModal } from '../components/routines/RoutinesModal';
-import { ExerciseDetailModal } from '../components/workout/ExerciseDetailModal';
+import { SupersetModal } from '../components/workout/SupersetModal';
+import { ExerciseDetailScreen } from './ExerciseDetailScreen';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 
 interface WorkoutScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
+  onDateChange?: (newDate: string) => void;
+  onFullScreenToggle?: (isFullScreen: boolean) => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
 }
 
 export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   db,
   selectedDate,
+  onDateChange,
+  onFullScreenToggle,
   onShowToast,
 }) => {
   const { colors } = useTheme();
@@ -64,17 +70,65 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [exerciseItems, setExerciseItems] = useState<ExerciseWithLogs[]>([]);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
+  const [sessionSupersets, setSessionSupersets] = useState<SupersetGroup[]>([]);
+
+  // Modals
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [isCopyModalVisible, setIsCopyModalVisible] = useState(false);
   const [isRoutinesModalVisible, setIsRoutinesModalVisible] = useState(false);
-  const [selectedExerciseForDetail, setSelectedExerciseForDetail] = useState<Exercise | null>(null);
+  const [isSupersetModalVisible, setIsSupersetModalVisible] = useState(false);
+
+  // Dedicated Full Screen Exercise Logger state
+  const [selectedExerciseForLogging, setSelectedExerciseForLogging] = useState<ExerciseWithLogs | null>(null);
+
+  // Multi-Select & Reorder Mode (Screenshot 3)
+  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [selectedExerciseIds, setSelectedExerciseIds] = useState<number[]>([]);
 
   const [sessionNotes, setSessionNotes] = useState('');
   const [showNotesInput, setShowNotesInput] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Superset Pairing State
-  const [pairingSourceId, setPairingSourceId] = useState<number | null>(null);
+  // Inform parent of full-screen status
+  useEffect(() => {
+    if (onFullScreenToggle) {
+      onFullScreenToggle(selectedExerciseForLogging !== null);
+    }
+  }, [selectedExerciseForLogging, onFullScreenToggle]);
+
+  // Swipe Left/Right to Navigate Days!
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (evt, gestureState) => {
+          // Horizontal swipe only if significant horizontal displacement
+          return (
+            Math.abs(gestureState.dx) > 35 &&
+            Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.8 &&
+            !selectedExerciseForLogging &&
+            !isReorderMode
+          );
+        },
+        onPanResponderRelease: (evt, gestureState) => {
+          if (gestureState.dx < -50) {
+            // Swipe Left -> Next Day
+            if (onDateChange) {
+              const next = addDays(parseISO(selectedDate), 1);
+              onDateChange(format(next, 'yyyy-MM-dd'));
+              onShowToast('info', `📅 ${format(next, 'EEE, d MMM')}`);
+            }
+          } else if (gestureState.dx > 50) {
+            // Swipe Right -> Previous Day
+            if (onDateChange) {
+              const prev = subDays(parseISO(selectedDate), 1);
+              onDateChange(format(prev, 'yyyy-MM-dd'));
+              onShowToast('info', `📅 ${format(prev, 'EEE, d MMM')}`);
+            }
+          }
+        },
+      }),
+    [selectedDate, onDateChange, selectedExerciseForLogging, isReorderMode, onShowToast]
+  );
 
   // Load session & exercises for selectedDate
   const loadData = useCallback(async () => {
@@ -88,25 +142,116 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
       setSessionNotes(sess.notes || '');
       setShowNotesInput(!!sess.notes);
 
-      const items = await getExerciseLogsForSession(db, sess.id, selectedDate);
+      const [items, supersetsList] = await Promise.all([
+        getExerciseLogsForSession(db, sess.id, selectedDate),
+        getSessionSupersets(db, sess.id),
+      ]);
+
       setExerciseItems(items);
+      setSessionSupersets(supersetsList);
+
+      // Keep active full screen synced
+      if (selectedExerciseForLogging) {
+        const updatedActive = items.find((i) => i.exercise.id === selectedExerciseForLogging.exercise.id);
+        if (updatedActive) {
+          setSelectedExerciseForLogging(updatedActive);
+        }
+      }
     } catch (err: any) {
       console.error(err);
       onShowToast('error', `Failed to load workout: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [db, selectedDate]);
+  }, [db, selectedDate, selectedExerciseForLogging?.exercise.id]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Add Exercise to current session
+  // Reorder handling (Move up / down)
+  const handleMoveUp = (exerciseId: number) => {
+    const idx = exerciseItems.findIndex((e) => e.exercise.id === exerciseId);
+    if (idx <= 0) return;
+    const newItems = [...exerciseItems];
+    const temp = newItems[idx];
+    newItems[idx] = newItems[idx - 1];
+    newItems[idx - 1] = temp;
+    setExerciseItems(newItems);
+  };
+
+  const handleMoveDown = (exerciseId: number) => {
+    const idx = exerciseItems.findIndex((e) => e.exercise.id === exerciseId);
+    if (idx === -1 || idx >= exerciseItems.length - 1) return;
+    const newItems = [...exerciseItems];
+    const temp = newItems[idx];
+    newItems[idx] = newItems[idx + 1];
+    newItems[idx + 1] = temp;
+    setExerciseItems(newItems);
+  };
+
+  // Toggle selection in reorder mode
+  const handleToggleSelect = (exerciseId: number) => {
+    setSelectedExerciseIds((prev) =>
+      prev.includes(exerciseId) ? prev.filter((id) => id !== exerciseId) : [...prev, exerciseId]
+    );
+  };
+
+  // Delete selected exercises
+  const handleDeleteSelected = () => {
+    if (selectedExerciseIds.length === 0 || !session) return;
+    Alert.alert(
+      'Delete Exercises',
+      `Are you sure you want to remove ${selectedExerciseIds.length} exercise(s) from today?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            for (const id of selectedExerciseIds) {
+              await removeExerciseFromSession(db, session.id, id);
+            }
+            setSelectedExerciseIds([]);
+            setIsReorderMode(false);
+            await loadData();
+            onShowToast('info', 'Selected exercises removed');
+          },
+        },
+      ]
+    );
+  };
+
+  // Select all or none
+  const handleSelectAll = () => {
+    if (selectedExerciseIds.length === exerciseItems.length) {
+      setSelectedExerciseIds([]);
+    } else {
+      setSelectedExerciseIds(exerciseItems.map((e) => e.exercise.id));
+    }
+  };
+
+  // If full-screen exercise logger is open
+  if (selectedExerciseForLogging) {
+    return (
+      <ExerciseDetailScreen
+        db={db}
+        exerciseItem={selectedExerciseForLogging}
+        allSessionExercises={exerciseItems}
+        currentDate={selectedDate}
+        onBack={() => setSelectedExerciseForLogging(null)}
+        onDataChanged={loadData}
+        onSwitchExercise={(nextItem) => setSelectedExerciseForLogging(nextItem)}
+        onShowToast={onShowToast}
+      />
+    );
+  }
+
+  // Add Exercise to current session & open its logger
   const handleSelectExercise = async (exercise: Exercise) => {
     if (!session) return;
     try {
-      const alreadyInList = exerciseItems.some((item) => item.exercise.id === exercise.id);
+      const alreadyInList = exerciseItems.find((item) => item.exercise.id === exercise.id);
       if (!alreadyInList) {
         await addExerciseSet(
           db,
@@ -122,123 +267,21 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
           null,
           null
         );
-        await loadData();
+        const items = await getExerciseLogsForSession(db, session.id, selectedDate);
+        setExerciseItems(items);
+        const newItem = items.find((i) => i.exercise.id === exercise.id);
+        if (newItem) {
+          setSelectedExerciseForLogging(newItem);
+        }
         onShowToast('success', `Added ${exercise.name}`);
+      } else {
+        setSelectedExerciseForLogging(alreadyInList);
       }
     } catch (err: any) {
       onShowToast('error', `Could not add exercise: ${err.message}`);
     }
   };
 
-  // Add new set for an existing exercise card
-  const handleAddSet = async (exerciseId: number, lastLog?: ExerciseLog) => {
-    if (!session) return;
-    try {
-      const currentItem = exerciseItems.find((item) => item.exercise.id === exerciseId);
-      const nextSetNum = (currentItem?.logs.length || 0) + 1;
-
-      const defaultWeight = lastLog?.weight_kg || 0;
-      const defaultReps = lastLog?.reps || 0;
-      const defaultDistance = lastLog?.distance_val || 0;
-      const defaultUnit = lastLog?.distance_unit || 'km';
-      const defaultTime = lastLog?.time_duration || '00:00:00';
-      const supersetId = currentItem?.supersetId || null;
-
-      await addExerciseSet(
-        db,
-        session.id,
-        exerciseId,
-        nextSetNum,
-        defaultWeight,
-        defaultReps,
-        defaultDistance,
-        defaultUnit,
-        defaultTime,
-        null,
-        null,
-        supersetId
-      );
-
-      const items = await getExerciseLogsForSession(db, session.id, selectedDate);
-      setExerciseItems(items);
-    } catch (err: any) {
-      onShowToast('error', `Failed to add set: ${err.message}`);
-    }
-  };
-
-  // Update a set
-  const handleUpdateSet = async (logId: number, updates: Partial<ExerciseLog>) => {
-    if (!session) return;
-    try {
-      await updateExerciseSet(db, logId, updates);
-      setExerciseItems((prev) =>
-        prev.map((item) => ({
-          ...item,
-          logs: item.logs.map((l) => (l.id === logId ? { ...l, ...updates } : l)),
-        }))
-      );
-    } catch (err: any) {
-      onShowToast('error', `Failed to update set: ${err.message}`);
-    }
-  };
-
-  // Delete a set
-  const handleDeleteSet = async (logId: number) => {
-    if (!session) return;
-    try {
-      await deleteExerciseSet(db, logId);
-      const items = await getExerciseLogsForSession(db, session.id, selectedDate);
-      setExerciseItems(items);
-    } catch (err: any) {
-      onShowToast('error', `Failed to delete set: ${err.message}`);
-    }
-  };
-
-  // Remove entire exercise from session
-  const handleRemoveExercise = async (exerciseId: number) => {
-    if (!session) return;
-    try {
-      await removeExerciseFromSession(db, session.id, exerciseId);
-      const items = await getExerciseLogsForSession(db, session.id, selectedDate);
-      setExerciseItems(items);
-      onShowToast('info', 'Exercise removed from today');
-    } catch (err: any) {
-      onShowToast('error', `Failed to remove exercise: ${err.message}`);
-    }
-  };
-
-  // Superset Pairing
-  const handleStartSupersetPairing = (exerciseId: number) => {
-    setPairingSourceId(exerciseId);
-    onShowToast('info', 'Touch & select a second exercise to link as Superset!');
-  };
-
-  const handleSelectForPairing = async (secondExerciseId: number) => {
-    if (!session || !pairingSourceId) return;
-    try {
-      await linkExercisesAsSuperset(db, session.id, pairingSourceId, secondExerciseId);
-      setPairingSourceId(null);
-      const items = await getExerciseLogsForSession(db, session.id, selectedDate);
-      setExerciseItems(items);
-      onShowToast('success', 'Exercises linked as Superset! 🔗');
-    } catch (err: any) {
-      onShowToast('error', `Failed to link superset: ${err.message}`);
-    }
-  };
-
-  const handleUnlinkSuperset = async (exerciseId: number) => {
-    if (!session) return;
-    try {
-      await unlinkExerciseFromSuperset(db, session.id, exerciseId);
-      const items = await getExerciseLogsForSession(db, session.id, selectedDate);
-      setExerciseItems(items);
-      onShowToast('info', 'Superset unlinked');
-    } catch (err: any) {
-      onShowToast('error', `Failed to unlink: ${err.message}`);
-    }
-  };
-
-  // Create custom exercise
   const handleCreateCustomExercise = async (
     name: string,
     category: string,
@@ -291,102 +334,132 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Superset Pairing Mode Alert Top Banner */}
-      {pairingSourceId !== null && (
-        <View style={[styles.pairingBanner, { backgroundColor: colors.surfaceHighlight, borderBottomColor: colors.primary }]}>
-          <View style={styles.pairingBannerLeft}>
-            <Link2 size={16} color={colors.primary} />
-            <Text style={[styles.pairingBannerText, { color: colors.primary }]}>
-              Select second exercise to link as Superset
+    <View {...panResponder.panHandlers} style={[styles.container, { backgroundColor: '#121316' }]}>
+      {/* ================= REORDER / MULTI-SELECT ACTION BAR (Screenshot 3) ================= */}
+      {isReorderMode ? (
+        <View style={styles.reorderActionBar}>
+          <TouchableOpacity style={styles.actionBtnLeft} onPress={handleSelectAll}>
+            <Check size={20} color="#38BDF8" strokeWidth={3} />
+            <Text style={styles.selectedCountText}>
+              {selectedExerciseIds.length} exercises
             </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.cancelPairingBtn}
-            onPress={() => setPairingSourceId(null)}
-          >
-            <X size={16} color={colors.textSecondary} />
           </TouchableOpacity>
+
+          <View style={styles.actionBtnsRight}>
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={() => setIsSupersetModalVisible(true)}
+              disabled={selectedExerciseIds.length === 0}
+            >
+              <Link2
+                size={22}
+                color={selectedExerciseIds.length > 0 ? '#38BDF8' : '#64748B'}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={handleDeleteSelected}
+              disabled={selectedExerciseIds.length === 0}
+            >
+              <Trash2
+                size={22}
+                color={selectedExerciseIds.length > 0 ? '#EF4444' : '#64748B'}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionIconBtn}
+              onPress={() => {
+                setIsReorderMode(false);
+                setSelectedExerciseIds([]);
+              }}
+            >
+              <X size={22} color="#E2E8F0" />
+            </TouchableOpacity>
+          </View>
         </View>
-      )}
+      ) : null}
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={loadData} tintColor={colors.primary} />
+          <RefreshControl refreshing={isLoading} onRefresh={loadData} tintColor="#38BDF8" />
         }
       >
-        {/* Session Stats Banner */}
+        {/* Session Stats Banner (Rounded Cards) */}
         <View style={styles.metricsRow}>
-          <Card style={[styles.metricCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>VOLUME</Text>
-            <Text style={[styles.metricValue, { color: colors.text }]}>
+          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
+            <Text style={styles.metricLabel}>VOLUME</Text>
+            <Text style={styles.metricValue}>
               {totalVolumeKg > 0 ? totalVolumeKg.toLocaleString() : '0'}
-              <Text style={[styles.metricUnit, { color: colors.textSecondary }]}> kg</Text>
+              <Text style={styles.metricUnit}> kg</Text>
             </Text>
-          </Card>
+          </View>
 
-          <Card style={[styles.metricCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>SETS</Text>
-            <Text style={[styles.metricValue, { color: colors.text }]}>{totalSets}</Text>
-          </Card>
+          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
+            <Text style={styles.metricLabel}>SETS</Text>
+            <Text style={styles.metricValue}>{totalSets}</Text>
+          </View>
 
-          <Card style={[styles.metricCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>REPS</Text>
-            <Text style={[styles.metricValue, { color: colors.text }]}>{totalReps}</Text>
-          </Card>
+          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
+            <Text style={styles.metricLabel}>REPS</Text>
+            <Text style={styles.metricValue}>{totalReps}</Text>
+          </View>
         </View>
 
         {/* Quick Toolbar (Routines & Copy Actions) */}
         <View style={styles.quickToolsRow}>
           <TouchableOpacity
-            style={[styles.quickToolBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+            style={[styles.quickToolBtn, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}
             onPress={() => setIsRoutinesModalVisible(true)}
             activeOpacity={0.7}
           >
-            <Layers size={15} color={colors.primary} />
-            <Text style={[styles.quickToolText, { color: colors.text }]}>Routines & Splits</Text>
+            <Layers size={15} color="#A3E635" />
+            <Text style={styles.quickToolText}>Routines & Splits</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.quickToolBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+            style={[styles.quickToolBtn, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}
             onPress={() => setIsCopyModalVisible(true)}
             activeOpacity={0.7}
           >
-            <Copy size={15} color={colors.secondary} />
-            <Text style={[styles.quickToolText, { color: colors.text }]}>Copy from Date</Text>
+            <Copy size={15} color="#38BDF8" />
+            <Text style={styles.quickToolText}>Copy from Date</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Exercises List */}
+        {/* Exercises List (FitNotes Style with Rounded Corners) */}
         {exerciseItems.length > 0 ? (
-          exerciseItems.map((item) => (
+          exerciseItems.map((item, idx) => (
             <ExerciseCard
               key={item.exercise.id}
               item={item}
-              onAddSet={handleAddSet}
-              onUpdateSet={handleUpdateSet}
-              onDeleteSet={handleDeleteSet}
-              onRemoveExercise={handleRemoveExercise}
-              onStartSupersetPairing={handleStartSupersetPairing}
-              onUnlinkSuperset={handleUnlinkSuperset}
-              onOpenDetail={(ex) => setSelectedExerciseForDetail(ex)}
-              isPairingMode={pairingSourceId !== null}
-              isPairingSource={pairingSourceId === item.exercise.id}
-              onSelectForPairing={handleSelectForPairing}
+              onOpenLogger={(exItem) => setSelectedExerciseForLogging(exItem)}
+              onLongPress={(exId) => {
+                setIsReorderMode(true);
+                setSelectedExerciseIds([exId]);
+              }}
+              isReorderMode={isReorderMode}
+              isSelected={selectedExerciseIds.includes(item.exercise.id)}
+              onToggleSelect={handleToggleSelect}
+              onMoveUp={handleMoveUp}
+              onMoveDown={handleMoveDown}
+              canMoveUp={idx > 0}
+              canMoveDown={idx < exerciseItems.length - 1}
             />
           ))
         ) : (
           /* Empty State */
-          <Card style={[styles.emptyCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            <View style={[styles.emptyIconBg, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}>
-              <Dumbbell size={36} color={colors.primary} />
+          <Card style={[styles.emptyCard, { backgroundColor: '#18191D', borderColor: '#26282E' }]}>
+            <View style={[styles.emptyIconBg, { backgroundColor: '#38BDF820', borderColor: '#38BDF8' }]}>
+              <Dumbbell size={36} color="#38BDF8" />
             </View>
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>Workout Log Empty</Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              Start tracking sets, load a saved routine, or copy exercises from any previous date.
+            <Text style={styles.emptyTitle}>Workout Log Empty</Text>
+            <Text style={styles.emptySubtitle}>
+              Swipe left/right to browse dates, load a routine, or tap below to add exercises.
             </Text>
 
             <Button
@@ -396,64 +469,47 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
               onPress={() => setIsAddModalVisible(true)}
               style={styles.emptyBtn}
             />
-
-            <Button
-              title="Load Saved Routine"
-              icon={<Layers size={16} color={colors.primary} />}
-              variant="secondary"
-              size="md"
-              onPress={() => setIsRoutinesModalVisible(true)}
-              style={[styles.emptyBtn, { marginTop: spacing.xs }]}
-            />
-
-            <Button
-              title="Copy from Previous Date"
-              icon={<Copy size={16} color={colors.secondary} />}
-              variant="secondary"
-              size="md"
-              onPress={() => setIsCopyModalVisible(true)}
-              style={[styles.emptyBtn, { marginTop: spacing.xs }]}
-            />
           </Card>
         )}
 
         {/* Bottom Actions Row: + Add Exercise & Workout Notes */}
         {exerciseItems.length > 0 && (
           <View style={styles.bottomActions}>
-            <Button
-              title="+ Add Exercise"
-              variant="primary"
-              size="md"
+            <TouchableOpacity
+              style={[styles.addExerciseMainBtn, { backgroundColor: colors.primary }]}
               onPress={() => setIsAddModalVisible(true)}
-              style={{ flex: 1 }}
-            />
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.addExerciseMainText, { color: colors.textInverse }]}>+ Add Exercise</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[
                 styles.notesToggleBtn,
-                { backgroundColor: colors.surfaceHighlight, borderColor: colors.borderLight },
+                { backgroundColor: '#1A1C22', borderColor: '#262930' },
               ]}
               onPress={() => setShowNotesInput(!showNotesInput)}
               activeOpacity={0.7}
             >
-              <FileText size={18} color={showNotesInput ? colors.primary : colors.textSecondary} />
+              <FileText size={18} color={showNotesInput ? colors.primary : '#94A3B8'} />
             </TouchableOpacity>
           </View>
         )}
 
         {/* Workout Session Notes Card */}
         {showNotesInput && (
-          <Card style={[styles.notesCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            <Text style={[styles.notesTitle, { color: colors.textSecondary }]}>Workout Session Notes</Text>
+          <View style={[styles.notesCard, { backgroundColor: '#18191D', borderColor: '#26282E' }]}>
+            <Text style={styles.notesTitle}>Workout Session Notes</Text>
             <TextInput
-              style={[styles.notesInput, { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text }]}
+              style={styles.notesInput}
               multiline
               numberOfLines={3}
               value={sessionNotes}
               onChangeText={handleNotesChange}
               placeholder="e.g. Great pump, hit PR on Bench, felt strong..."
-              placeholderTextColor={colors.textDisabled}
+              placeholderTextColor="#64748B"
             />
-          </Card>
+          </View>
         )}
       </ScrollView>
 
@@ -490,13 +546,24 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
         }}
       />
 
-      {/* 4. Deep-Dive Exercise Detail & Graph Modal */}
-      <ExerciseDetailModal
-        visible={selectedExerciseForDetail !== null}
-        db={db}
-        exercise={selectedExerciseForDetail}
-        onClose={() => setSelectedExerciseForDetail(null)}
-      />
+      {/* 4. FitNotes Supersets Manager Modal */}
+      {session && (
+        <SupersetModal
+          visible={isSupersetModalVisible}
+          db={db}
+          sessionId={session.id}
+          supersets={sessionSupersets}
+          allExercises={exerciseItems}
+          selectedExerciseIds={selectedExerciseIds}
+          onClose={() => {
+            setIsSupersetModalVisible(false);
+            setIsReorderMode(false);
+            setSelectedExerciseIds([]);
+          }}
+          onRefresh={loadData}
+          onShowToast={onShowToast}
+        />
+      )}
     </View>
   );
 };
@@ -505,62 +572,76 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  pairingBanner: {
+  reorderActionBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
+    backgroundColor: '#1E293B',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
+    borderBottomColor: '#38BDF8',
   },
-  pairingBannerLeft: {
+  actionBtnLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 8,
   },
-  pairingBannerText: {
-    ...typography.caption,
+  selectedCountText: {
+    ...typography.titleSmall,
+    fontSize: 15,
+    color: '#FFFFFF',
     fontWeight: '700',
   },
-  cancelPairingBtn: {
+  actionBtnsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  actionIconBtn: {
     padding: 4,
   },
   scrollContent: {
-    padding: spacing.lg,
+    paddingHorizontal: 14,
+    paddingTop: 10,
     paddingBottom: 40,
   },
   metricsRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: 8,
+    marginBottom: 8,
   },
   metricCard: {
     flex: 1,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     alignItems: 'center',
-    borderRadius: borderRadius.lg,
+    borderRadius: 14,
     borderWidth: 1,
   },
   metricLabel: {
     ...typography.caption,
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: '#94A3B8',
     letterSpacing: 0.5,
   },
   metricValue: {
     ...typography.mono,
-    fontSize: 18,
+    fontSize: 17,
     marginTop: 2,
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   metricUnit: {
     fontSize: 11,
     fontWeight: '500',
+    color: '#94A3B8',
   },
   quickToolsRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
+    gap: 8,
+    marginBottom: 10,
   },
   quickToolBtn: {
     flex: 1,
@@ -569,20 +650,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 10,
-    borderRadius: borderRadius.md,
+    borderRadius: 14,
     borderWidth: 1,
   },
   quickToolText: {
     ...typography.caption,
     fontSize: 12,
     fontWeight: '700',
+    color: '#E2E8F0',
   },
   emptyCard: {
     alignItems: 'center',
     paddingVertical: 36,
     paddingHorizontal: spacing.xl,
     marginVertical: spacing.lg,
-    borderRadius: borderRadius.xl,
+    borderRadius: 20,
     borderWidth: 1,
   },
   emptyIconBg: {
@@ -597,47 +679,68 @@ const styles = StyleSheet.create({
   emptyTitle: {
     ...typography.titleMedium,
     fontSize: 20,
+    color: '#FFFFFF',
     marginBottom: 6,
   },
   emptySubtitle: {
     ...typography.bodySecondary,
     textAlign: 'center',
     lineHeight: 20,
+    color: '#94A3B8',
     marginBottom: spacing.xl,
   },
   emptyBtn: {
     width: '100%',
+    borderRadius: 14,
   },
   bottomActions: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  addExerciseMainBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addExerciseMainText: {
+    ...typography.titleSmall,
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
   notesToggleBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: borderRadius.md,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
   },
   notesCard: {
     marginBottom: spacing.md,
-    borderRadius: borderRadius.lg,
+    borderRadius: 16,
     borderWidth: 1,
+    padding: spacing.md,
   },
   notesTitle: {
     ...typography.titleSmall,
     fontSize: 13,
+    color: '#94A3B8',
     marginBottom: 6,
   },
   notesInput: {
     ...typography.bodySecondary,
-    borderRadius: borderRadius.md,
+    backgroundColor: '#1E2025',
+    color: '#FFFFFF',
+    borderRadius: 12,
     padding: spacing.md,
     minHeight: 70,
     borderWidth: 1,
+    borderColor: '#333742',
     textAlignVertical: 'top',
   },
 });

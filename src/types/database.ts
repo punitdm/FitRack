@@ -32,10 +32,22 @@ export interface ExerciseLog {
   superset_id?: string | null;
 }
 
+export interface SupersetGroup {
+  id: string; // e.g. 'ss_1', 'ss_2'
+  session_id: number;
+  name: string; // 'Superset 1', 'Superset 2'
+  color: string; // '#EF4444', '#A855F7', '#06B6D4', '#F59E0B', '#22C55E'
+  jump_between_exercises: number; // 1 or 0
+  disable_timer: number; // 1 or 0
+}
+
 export interface ExerciseWithLogs {
   exercise: Exercise;
   logs: ExerciseLog[];
   supersetId?: string | null;
+  supersetName?: string | null;
+  supersetColor?: string | null;
+  supersetJumpBetween?: boolean;
   supersetPartnerName?: string | null;
   previousSetInfo?: {
     weight_kg: number;

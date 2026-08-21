@@ -1,383 +1,255 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Plus, Trash2, TrendingUp, Link2, Unlink, Info } from 'lucide-react-native';
+import { MessageSquare, Award, ArrowUp, ArrowDown, Check } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
-import { ExerciseWithLogs, ExerciseLog, Exercise } from '../../types/database';
-import { SetRow } from './SetRow';
-import { Card } from '../common/Card';
+import { ExerciseWithLogs } from '../../types/database';
 
 interface ExerciseCardProps {
   item: ExerciseWithLogs;
-  onAddSet: (exerciseId: number, lastLog?: ExerciseLog) => void;
-  onUpdateSet: (logId: number, updates: Partial<ExerciseLog>) => void;
-  onDeleteSet: (logId: number) => void;
-  onRemoveExercise: (exerciseId: number) => void;
-  onStartSupersetPairing?: (exerciseId: number) => void;
-  onUnlinkSuperset?: (exerciseId: number) => void;
-  onOpenDetail?: (exercise: Exercise) => void;
-  isPairingMode?: boolean;
-  isPairingSource?: boolean;
-  onSelectForPairing?: (exerciseId: number) => void;
+  onOpenLogger: (item: ExerciseWithLogs) => void;
+  onLongPress: (exerciseId: number) => void;
+  isReorderMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (exerciseId: number) => void;
+  onMoveUp?: (exerciseId: number) => void;
+  onMoveDown?: (exerciseId: number) => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 export const ExerciseCard: React.FC<ExerciseCardProps> = ({
   item,
-  onAddSet,
-  onUpdateSet,
-  onDeleteSet,
-  onRemoveExercise,
-  onStartSupersetPairing,
-  onUnlinkSuperset,
-  onOpenDetail,
-  isPairingMode = false,
-  isPairingSource = false,
-  onSelectForPairing,
+  onOpenLogger,
+  onLongPress,
+  isReorderMode = false,
+  isSelected = false,
+  onToggleSelect,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = false,
+  canMoveDown = false,
 }) => {
   const { colors } = useTheme();
-  const { exercise, logs, previousSetInfo, supersetId, supersetPartnerName } = item;
-  const categoryColor = colors.categories[exercise.category] || colors.categories.Custom;
-
-  let prevSummary = '';
-  if (previousSetInfo) {
-    if (exercise.tracking_type === 'weight_reps') {
-      prevSummary = `${previousSetInfo.weight_kg}kg × ${previousSetInfo.reps} reps`;
-    } else if (exercise.tracking_type === 'distance_time') {
-      prevSummary = `${previousSetInfo.distance_val}km (${previousSetInfo.time_duration})`;
-    } else {
-      prevSummary = previousSetInfo.time_duration || '';
-    }
-  }
-
-  const handleAddSetClick = () => {
-    const lastLog = logs.length > 0 ? logs[logs.length - 1] : undefined;
-    onAddSet(exercise.id, lastLog);
-  };
+  const { exercise, logs, supersetId, supersetColor } = item;
 
   const isSuperset = !!supersetId;
+  const isWeightReps = exercise.tracking_type === 'weight_reps';
+  const isDistanceTime = exercise.tracking_type === 'distance_time';
+
+  // Find max weight in this session to mark with 🏆
+  const maxWeightInSession = logs.reduce((max, l) => Math.max(max, l.weight_kg || 0), 0);
+
+  const barColor = supersetColor || colors.primary;
 
   return (
     <TouchableOpacity
-      activeOpacity={isPairingMode ? 0.8 : 1}
-      onLongPress={() => {
-        if (onStartSupersetPairing && !isSuperset) {
-          onStartSupersetPairing(exercise.id);
-        }
-      }}
+      style={[
+        styles.cardContainer,
+        isSelected && styles.cardSelectedBorder,
+      ]}
+      activeOpacity={0.75}
       onPress={() => {
-        if (isPairingMode && onSelectForPairing && !isPairingSource) {
-          onSelectForPairing(exercise.id);
+        if (isReorderMode && onToggleSelect) {
+          onToggleSelect(exercise.id);
+        } else {
+          onOpenLogger(item);
         }
       }}
+      onLongPress={() => onLongPress(exercise.id)}
     >
-      <Card
-        style={[
-          styles.cardContainer,
-          { backgroundColor: colors.surfaceCard, borderColor: colors.border },
-          isSuperset && [styles.supersetCardBorder, { borderLeftColor: colors.primary }],
-          isPairingSource && { borderColor: colors.primary, backgroundColor: colors.primaryMuted },
-          isPairingMode && !isPairingSource && { borderColor: colors.secondary, borderStyle: 'dashed' },
-        ]}
-      >
-        {/* Superset Banner */}
-        {isSuperset && (
-          <View style={[styles.supersetBannerRow, { borderBottomColor: colors.border }]}>
-            <View style={[styles.supersetTag, { backgroundColor: colors.primaryMuted }]}>
-              <Link2 size={12} color={colors.primary} />
-              <Text style={[styles.supersetTagText, { color: colors.primary }]}>
-                SUPERSET {supersetPartnerName ? `↔ ${supersetPartnerName}` : ''}
-              </Text>
-            </View>
-            {onUnlinkSuperset && (
-              <TouchableOpacity
-                style={styles.unlinkBtn}
-                onPress={() => onUnlinkSuperset(exercise.id)}
-                activeOpacity={0.7}
-              >
-                <Unlink size={13} color={colors.textMuted} />
-                <Text style={[styles.unlinkText, { color: colors.textMuted }]}>Unlink</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+      {/* Left Superset Color Bar (Screenshot 1) */}
+      {isSuperset && (
+        <View style={[styles.supersetLeftBar, { backgroundColor: barColor }]} />
+      )}
 
-        {/* Pairing prompt indicator */}
-        {isPairingMode && (
-          <View style={[styles.pairingPrompt, { backgroundColor: colors.primaryMuted }]}>
-            <Text style={[styles.pairingPromptText, { color: colors.primary }]}>
-              {isPairingSource ? '⚡ Linking this exercise... Tap 2nd exercise' : '👉 Tap to link as Superset!'}
-            </Text>
-          </View>
-        )}
-
-        {/* Exercise Header */}
+      <View style={styles.cardInner}>
+        {/* Card Header (FitNotes Style) */}
         <View style={styles.headerRow}>
-          <TouchableOpacity
-            style={styles.titleInfo}
-            onPress={() => onOpenDetail && onOpenDetail(exercise)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.categoryBadgeRow}>
-              <View
-                style={[
-                  styles.categoryPill,
-                  { backgroundColor: `${categoryColor}20`, borderColor: categoryColor },
-                ]}
-              >
-                <Text style={[styles.categoryText, { color: categoryColor }]}>{exercise.category}</Text>
-              </View>
-              {previousSetInfo && (
-                <View style={[styles.prevBadge, { backgroundColor: colors.primaryMuted }]}>
-                  <TrendingUp size={11} color={colors.primary} />
-                  <Text style={[styles.prevBadgeText, { color: colors.primary }]}>Last: {prevSummary}</Text>
+          <View style={styles.titleWrapper}>
+            <Text style={styles.exerciseTitle} numberOfLines={1}>
+              {exercise.name}
+            </Text>
+            <View style={[styles.headerUnderline, { backgroundColor: '#206E8A' }]} />
+          </View>
+
+          {/* Reorder Buttons (Screenshot 3) */}
+          {isReorderMode && (
+            <View style={styles.reorderArrowsRow}>
+              {canMoveUp && (
+                <TouchableOpacity
+                  style={styles.arrowBtn}
+                  onPress={() => onMoveUp && onMoveUp(exercise.id)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <ArrowUp size={16} color="#38BDF8" strokeWidth={2.5} />
+                </TouchableOpacity>
+              )}
+              {canMoveDown && (
+                <TouchableOpacity
+                  style={styles.arrowBtn}
+                  onPress={() => onMoveDown && onMoveDown(exercise.id)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <ArrowDown size={16} color="#38BDF8" strokeWidth={2.5} />
+                </TouchableOpacity>
+              )}
+              {isSelected && (
+                <View style={styles.selectedCheckBadge}>
+                  <Check size={14} color="#38BDF8" strokeWidth={3} />
                 </View>
               )}
             </View>
-            <View style={styles.nameRow}>
-              <Text style={[styles.exerciseName, { color: colors.text }]}>{exercise.name}</Text>
-              <Info size={14} color={colors.textMuted} style={{ marginLeft: 4 }} />
-            </View>
-          </TouchableOpacity>
-
-          {/* Action buttons */}
-          <View style={styles.headerActions}>
-            {!isSuperset && onStartSupersetPairing && (
-              <TouchableOpacity
-                style={[styles.supersetTriggerBtn, { backgroundColor: colors.surfaceElevated }]}
-                onPress={() => onStartSupersetPairing(exercise.id)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Link2 size={15} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={[styles.removeExerciseBtn, { backgroundColor: colors.surfaceElevated }]}
-              onPress={() => onRemoveExercise(exercise.id)}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Trash2 size={15} color={colors.textDisabled} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Table Headers */}
-        <View style={[styles.tableHeaderRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.tableHeaderCol, { width: 24, textAlign: 'center', color: colors.textMuted }]}>SET</Text>
-          <Text style={[styles.tableHeaderCol, { width: 58, textAlign: 'center', color: colors.textMuted }]}>PREV</Text>
-          <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>
-            {exercise.tracking_type === 'weight_reps' ? 'KG' : exercise.tracking_type === 'distance_time' ? 'KM' : 'TIME'}
-          </Text>
-          {exercise.tracking_type !== 'time_only' && (
-            <Text
-              style={[
-                styles.tableHeaderCol,
-                { flex: exercise.tracking_type === 'distance_time' ? 1.2 : 1, textAlign: 'center', color: colors.textMuted },
-              ]}
-            >
-              {exercise.tracking_type === 'weight_reps' ? 'REPS' : 'TIME'}
-            </Text>
           )}
-          <Text style={[styles.tableHeaderCol, { width: 62, textAlign: 'center', color: colors.textMuted }]}>RPE</Text>
-          <Text style={[styles.tableHeaderCol, { width: 54, textAlign: 'center', color: colors.textMuted }]}>ACT</Text>
         </View>
 
-        {/* Set Rows */}
-        <View style={styles.setRowsContainer}>
-          {logs.map((log, index) => {
-            let prevSetText = '';
-            if (index === 0 && previousSetInfo) {
-              prevSetText =
-                exercise.tracking_type === 'weight_reps'
-                  ? `${previousSetInfo.weight_kg}k × ${previousSetInfo.reps}`
-                  : `${previousSetInfo.distance_val}k`;
-            } else if (index > 0 && logs[index - 1]) {
-              const prevLog = logs[index - 1];
-              prevSetText =
-                exercise.tracking_type === 'weight_reps'
-                  ? `${prevLog.weight_kg}k × ${prevLog.reps}`
-                  : `${prevLog.distance_val}k`;
-            }
+        {/* Individual Sets Rows (FitNotes Screenshot 1 & 2) */}
+        {logs.length > 0 ? (
+          <View style={styles.setsListContainer}>
+            {logs.map((log) => {
+              const hasComment = !!log.comment;
+              const isPr = maxWeightInSession > 0 && log.weight_kg === maxWeightInSession && isWeightReps;
 
-            return (
-              <SetRow
-                key={log.id}
-                log={log}
-                trackingType={exercise.tracking_type}
-                prevInfoText={prevSetText}
-                onUpdate={(updates) => onUpdateSet(log.id, updates)}
-                onDelete={() => onDeleteSet(log.id)}
-              />
-            );
-          })}
-        </View>
+              return (
+                <View key={log.id} style={styles.setRowItem}>
+                  {/* Left Icon Column */}
+                  <View style={styles.iconCol}>
+                    {hasComment ? (
+                      <MessageSquare size={16} color="#38BDF8" fill="#38BDF8" />
+                    ) : isPr ? (
+                      <Award size={16} color="#38BDF8" />
+                    ) : null}
+                  </View>
 
-        {/* Add Set Button */}
-        <TouchableOpacity
-          style={[styles.addSetButton, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
-          onPress={handleAddSetClick}
-          activeOpacity={0.7}
-        >
-          <Plus size={15} color={colors.primary} />
-          <Text style={[styles.addSetText, { color: colors.primary }]}>Add Set {logs.length + 1}</Text>
-        </TouchableOpacity>
-      </Card>
+                  {/* Weight Column */}
+                  <Text style={styles.weightCol}>
+                    {isWeightReps
+                      ? `${(Math.round(log.weight_kg * 10) / 10).toFixed(1)} kgs`
+                      : isDistanceTime
+                      ? `${log.distance_val} km`
+                      : log.time_duration}
+                  </Text>
+
+                  {/* Reps Column */}
+                  <Text style={styles.repsCol}>
+                    {isWeightReps
+                      ? `${log.reps} reps`
+                      : isDistanceTime
+                      ? log.time_duration
+                      : ''}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.emptySetsPrompt}>
+            <Text style={styles.emptyPromptText}>Tap to log sets</Text>
+          </View>
+        )}
+      </View>
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   cardContainer: {
-    marginBottom: spacing.md,
-    padding: spacing.md,
-    borderRadius: borderRadius.lg,
-  },
-  supersetCardBorder: {
-    borderLeftWidth: 4,
-  },
-  supersetBannerRow: {
+    backgroundColor: '#262930',
+    marginBottom: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#333742',
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.sm,
-    paddingBottom: 6,
-    borderBottomWidth: 1,
+    overflow: 'hidden',
   },
-  supersetTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: borderRadius.sm,
+  cardSelectedBorder: {
+    borderColor: '#38BDF8',
+    borderWidth: 1.5,
+    backgroundColor: '#2A303C',
   },
-  supersetTagText: {
-    ...typography.caption,
-    fontSize: 10,
-    fontWeight: '800',
+  supersetLeftBar: {
+    width: 5,
+    alignSelf: 'stretch',
   },
-  unlinkBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  unlinkText: {
-    ...typography.caption,
-    fontSize: 10,
-  },
-  pairingPrompt: {
-    paddingVertical: 6,
-    paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.sm,
-    marginBottom: spacing.sm,
-  },
-  pairingPromptText: {
-    ...typography.caption,
-    fontWeight: '700',
-    textAlign: 'center',
+  cardInner: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 8,
   },
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
-  },
-  titleInfo: {
-    flex: 1,
-    paddingRight: spacing.sm,
-  },
-  categoryBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: 4,
-  },
-  categoryPill: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-  },
-  categoryText: {
-    ...typography.caption,
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  prevBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: borderRadius.sm,
-  },
-  prevBadgeText: {
-    ...typography.caption,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  exerciseName: {
-    ...typography.titleSmall,
-    fontSize: 16,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  supersetTriggerBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: borderRadius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  removeExerciseBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: borderRadius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tableHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    gap: 6,
-    borderBottomWidth: 1,
     marginBottom: 6,
   },
-  tableHeaderCol: {
-    ...typography.caption,
-    fontSize: 10,
+  titleWrapper: {
+    flex: 1,
+  },
+  exerciseTitle: {
+    ...typography.titleMedium,
+    fontSize: 16,
+    color: '#FFFFFF',
     fontWeight: '700',
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
-  setRowsContainer: {
-    marginTop: 2,
+  headerUnderline: {
+    height: 1.5,
+    marginTop: 4,
+    width: '100%',
   },
-  addSetButton: {
+  reorderArrowsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: borderRadius.md,
-    marginTop: 4,
-    borderWidth: 1,
+    gap: 12,
+    paddingLeft: 8,
   },
-  addSetText: {
-    ...typography.bodySecondary,
-    fontSize: 13,
+  arrowBtn: {
+    padding: 4,
+  },
+  selectedCheckBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#38BDF820',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  setsListContainer: {
+    paddingVertical: 2,
+  },
+  setRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  iconCol: {
+    width: 28,
+    alignItems: 'flex-start',
+  },
+  weightCol: {
+    ...typography.body,
+    fontSize: 15,
+    color: '#FFFFFF',
     fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+  },
+  repsCol: {
+    ...typography.body,
+    fontSize: 15,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    width: 90,
+    textAlign: 'right',
+    paddingRight: 6,
+  },
+  emptySetsPrompt: {
+    paddingVertical: 6,
+  },
+  emptyPromptText: {
+    ...typography.caption,
+    fontSize: 12,
+    color: '#64748B',
+    fontStyle: 'italic',
   },
 });

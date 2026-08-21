@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, PanResponder } from 'react-native';
 import { ChevronLeft, ChevronRight, Calendar as CalIcon } from 'lucide-react-native';
 import {
   format,
@@ -19,36 +19,78 @@ interface WorkoutCalendarProps {
   workoutDates?: string[];
   selectedDate: string;
   onSelectDate: (date: string) => void;
-  monthsToShow?: number; // 1 for single month or 3 for continuous
+  monthsToShow?: number;
 }
 
 export const WorkoutCalendar: React.FC<WorkoutCalendarProps> = ({
   categoryDots = {},
   selectedDate,
   onSelectDate,
-  monthsToShow = 1,
 }) => {
   const { colors } = useTheme();
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date(selectedDate || new Date()));
 
+  // Smooth swipe gestures across months
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (evt, gestureState) => {
+          return Math.abs(gestureState.dx) > 25 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5;
+        },
+        onPanResponderRelease: (evt, gestureState) => {
+          if (gestureState.dx < -40) {
+            // Swipe Left -> Next Month
+            setCurrentMonth((prev) => addMonths(prev, 1));
+          } else if (gestureState.dx > 40) {
+            // Swipe Right -> Previous Month
+            setCurrentMonth((prev) => subMonths(prev, 1));
+          }
+        },
+      }),
+    []
+  );
+
   const daysOfWeek = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-  const renderMonthGrid = (monthDate: Date) => {
-    const monthStart = startOfMonth(monthDate);
-    const monthEnd = endOfMonth(monthDate);
-    const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  const monthStart = startOfMonth(currentMonth);
+  const monthEnd = endOfMonth(currentMonth);
+  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
-    let startDayOffset = getDay(monthStart) - 1;
-    if (startDayOffset < 0) startDayOffset = 6;
-    const blanks = Array.from({ length: startDayOffset }, (_, i) => i);
+  let startDayOffset = getDay(monthStart) - 1;
+  if (startDayOffset < 0) startDayOffset = 6;
+  const blanks = Array.from({ length: startDayOffset }, (_, i) => i);
 
-    return (
-      <View key={format(monthDate, 'yyyy-MM')} style={styles.monthBlock}>
-        {/* Month Header */}
-        <Text style={[styles.monthTitleText, { color: colors.text }]}>
-          {format(monthDate, 'MMMM yyyy').toUpperCase()}
-        </Text>
+  return (
+    <Card style={[styles.container, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+      {/* Month Navigator Toolbar */}
+      <View style={[styles.headerToolbar, { borderBottomColor: colors.border }]}>
+        <View style={styles.titleInfoRow}>
+          <CalIcon size={18} color={colors.primary} />
+          <Text style={[styles.toolbarTitle, { color: colors.text }]}>
+            {format(currentMonth, 'MMMM yyyy')}
+          </Text>
+        </View>
 
+        <View style={styles.navBtnsRow}>
+          <TouchableOpacity
+            style={[styles.navArrowBtn, { backgroundColor: colors.surfaceHighlight }]}
+            onPress={() => setCurrentMonth((prev) => subMonths(prev, 1))}
+            activeOpacity={0.7}
+          >
+            <ChevronLeft size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.navArrowBtn, { backgroundColor: colors.surfaceHighlight }]}
+            onPress={() => setCurrentMonth((prev) => addMonths(prev, 1))}
+            activeOpacity={0.7}
+          >
+            <ChevronRight size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Swipeable Calendar Grid Area */}
+      <View {...panResponder.panHandlers} style={styles.monthBlock}>
         {/* Days of Week */}
         <View style={[styles.weekDaysRow, { borderBottomColor: colors.border }]}>
           {daysOfWeek.map((day, idx) => (
@@ -76,7 +118,7 @@ export const WorkoutCalendar: React.FC<WorkoutCalendarProps> = ({
                 key={iso}
                 style={[
                   styles.dayCell,
-                  isSelected && [styles.selectedDayCircle, { backgroundColor: colors.secondary }],
+                  isSelected && [styles.selectedDayCircle, { backgroundColor: colors.primary }],
                 ]}
                 onPress={() => onSelectDate(iso)}
                 activeOpacity={0.7}
@@ -112,43 +154,6 @@ export const WorkoutCalendar: React.FC<WorkoutCalendarProps> = ({
           })}
         </View>
       </View>
-    );
-  };
-
-  const monthsToRender =
-    monthsToShow > 1
-      ? [subMonths(currentMonth, 1), currentMonth, addMonths(currentMonth, 1)]
-      : [currentMonth];
-
-  return (
-    <Card style={[styles.container, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-      {/* Month Navigator Toolbar */}
-      <View style={[styles.headerToolbar, { borderBottomColor: colors.border }]}>
-        <View style={styles.titleInfoRow}>
-          <CalIcon size={18} color={colors.primary} />
-          <Text style={[styles.toolbarTitle, { color: colors.text }]}>Calendar</Text>
-        </View>
-
-        <View style={styles.navBtnsRow}>
-          <TouchableOpacity
-            style={[styles.navArrowBtn, { backgroundColor: colors.surfaceHighlight }]}
-            onPress={() => setCurrentMonth(subMonths(currentMonth, 1))}
-            activeOpacity={0.7}
-          >
-            <ChevronLeft size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.navArrowBtn, { backgroundColor: colors.surfaceHighlight }]}
-            onPress={() => setCurrentMonth(addMonths(currentMonth, 1))}
-            activeOpacity={0.7}
-          >
-            <ChevronRight size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Month Grids */}
-      {monthsToRender.map((m) => renderMonthGrid(m))}
 
       {/* Color Legend Footer */}
       <View style={[styles.legendRow, { borderTopColor: colors.border }]}>
@@ -188,7 +193,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     paddingBottom: spacing.sm,
     borderBottomWidth: 1,
   },
@@ -199,29 +204,22 @@ const styles = StyleSheet.create({
   },
   toolbarTitle: {
     ...typography.titleMedium,
-    fontSize: 17,
+    fontSize: 16,
+    fontWeight: '800',
   },
   navBtnsRow: {
     flexDirection: 'row',
     gap: 6,
   },
   navArrowBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
   monthBlock: {
-    marginBottom: spacing.lg,
-  },
-  monthTitleText: {
-    ...typography.titleSmall,
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginVertical: spacing.sm,
+    marginBottom: spacing.sm,
   },
   weekDaysRow: {
     flexDirection: 'row',
@@ -243,14 +241,15 @@ const styles = StyleSheet.create({
   },
   dayCell: {
     width: '14.28%',
-    height: 48,
+    height: 46,
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 2,
     position: 'relative',
+    borderRadius: 23,
   },
   selectedDayCircle: {
-    borderRadius: 24,
+    borderRadius: 23,
   },
   dayNumText: {
     ...typography.caption,

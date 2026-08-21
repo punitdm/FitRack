@@ -85,6 +85,8 @@ function MainApp({
     loadDots();
   }, [db, selectedDate]);
 
+  const [isFullScreenLogger, setIsFullScreenLogger] = useState(false);
+
   if (!isDbReady || !db) {
     return (
       <View style={[styles.splashContainer, { backgroundColor: colors.background }]}>
@@ -110,8 +112,8 @@ function MainApp({
       {/* In-App Toast */}
       <Toast toast={toast} />
 
-      {/* Top Header */}
-      {activeTab !== 'home' && (
+      {/* Top Header (Hidden in Full Screen Logger) */}
+      {!isFullScreenLogger && activeTab !== 'home' && (
         <Header
           selectedDate={selectedDate}
           onDateChange={setSelectedDate}
@@ -135,6 +137,8 @@ function MainApp({
           <WorkoutScreen
             db={db}
             selectedDate={selectedDate}
+            onDateChange={setSelectedDate}
+            onFullScreenToggle={(isFull) => setIsFullScreenLogger(isFull)}
             onShowToast={showToast}
           />
         )}
@@ -182,8 +186,10 @@ function MainApp({
         />
       </Modal>
 
-      {/* Bottom Navigation Tab Bar */}
-      <TabBar activeTab={activeTab} onTabSelect={setActiveTab} />
+      {/* Bottom Navigation Tab Bar (Hidden in Full Screen Logger) */}
+      {!isFullScreenLogger && (
+        <TabBar activeTab={activeTab} onTabSelect={setActiveTab} />
+      )}
     </SafeAreaView>
   );
 }
