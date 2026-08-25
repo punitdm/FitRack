@@ -7,21 +7,22 @@ import { Dumbbell } from 'lucide-react-native';
 
 import { ThemeProvider, useTheme, typography, spacing } from './src/theme/theme';
 import { getDb, initDatabase } from './src/db/database';
-import { TabType } from './src/types/navigation';
 import { getTodayISO } from './src/utils/dateUtils';
 
-import { Header } from './src/components/common/Header';
-import { TabBar } from './src/components/common/TabBar';
 import { Toast, ToastMessage } from './src/components/common/Toast';
 import { Modal } from './src/components/common/Modal';
 import { WorkoutCalendar } from './src/components/analytics/WorkoutCalendar';
-import { getWorkoutDatesWithLogs, getCalendarCategoryDots, CalendarDayWorkoutData } from './src/db/database';
+import { getCalendarCategoryDots, CalendarDayWorkoutData } from './src/db/database';
 
-import { HomeScreen } from './src/screens/HomeScreen';
+import { HubScreen } from './src/screens/HubScreen';
 import { WorkoutScreen } from './src/screens/WorkoutScreen';
-import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { MacroScreen } from './src/screens/MacroScreen';
+import { RunningScreen } from './src/screens/RunningScreen';
+import { BodyTrackerScreen } from './src/screens/BodyTrackerScreen';
+import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { ImportExportScreen } from './src/screens/ImportExportScreen';
+
+type PillarType = 'hub' | 'workout' | 'nutrition' | 'running' | 'body' | 'analytics' | 'settings';
 
 export default function App() {
   const [db, setDb] = useState<SQLite.SQLiteDatabase | null>(null);
@@ -59,11 +60,13 @@ function MainApp({
 }) {
   const { colors, isDark } = useTheme();
 
-  const [activeTab, setActiveTab] = useState<TabType>('home');
+  // Active 4-Pillars Master Hub Navigation
+  const [activePillar, setActivePillar] = useState<PillarType>('hub');
   const [selectedDate, setSelectedDate] = useState<string>(getTodayISO());
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [calendarDots, setCalendarDots] = useState<Record<string, CalendarDayWorkoutData>>({});
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [isFullScreenLogger, setIsFullScreenLogger] = useState(false);
 
   const showToast = useCallback((type: 'success' | 'error' | 'info', text: string) => {
     setToast({ type, text });
@@ -85,8 +88,6 @@ function MainApp({
     loadDots();
   }, [db, selectedDate]);
 
-  const [isFullScreenLogger, setIsFullScreenLogger] = useState(false);
-
   if (!isDbReady || !db) {
     return (
       <View style={[styles.splashContainer, { backgroundColor: colors.background }]}>
@@ -103,8 +104,6 @@ function MainApp({
     );
   }
 
-  const showDateNav = activeTab === 'workout' || activeTab === 'macros';
-
   return (
     <SafeAreaView style={[styles.rootContainer, { backgroundColor: colors.background }]} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.surface} translucent={false} />
@@ -112,59 +111,86 @@ function MainApp({
       {/* In-App Toast */}
       <Toast toast={toast} />
 
-      {/* Top Header (Hidden in Full Screen Logger) */}
-      {!isFullScreenLogger && activeTab !== 'home' && (
-        <Header
-          selectedDate={selectedDate}
-          onDateChange={setSelectedDate}
-          onOpenDatePicker={() => setIsDatePickerVisible(true)}
-          showDateNav={showDateNav}
-        />
-      )}
-
       {/* Main Screen Content */}
       <View style={styles.contentContainer}>
-        {activeTab === 'home' && (
-          <HomeScreen
+        {/* 1. MASTER HUB (4-Pillars Hero View) */}
+        {activePillar === 'hub' && (
+          <HubScreen
             db={db}
             selectedDate={selectedDate}
-            onNavigateTab={setActiveTab}
+            onDateChange={setSelectedDate}
+            onOpenDatePicker={() => setIsDatePickerVisible(true)}
+            onNavigatePillar={(pillar) => setActivePillar(pillar)}
             onShowToast={showToast}
           />
         )}
 
-        {activeTab === 'workout' && (
+        {/* 2. PILLAR 1: WORKOUT SCREEN */}
+        {activePillar === 'workout' && (
           <WorkoutScreen
             db={db}
             selectedDate={selectedDate}
+            onBackToHub={() => setActivePillar('hub')}
             onDateChange={setSelectedDate}
             onFullScreenToggle={(isFull) => setIsFullScreenLogger(isFull)}
             onShowToast={showToast}
           />
         )}
 
-        {activeTab === 'analytics' && (
+        {/* 3. PILLAR 2: NUTRITION & MEALS SCREEN */}
+        {activePillar === 'nutrition' && (
+          <MacroScreen
+            db={db}
+            selectedDate={selectedDate}
+            onBackToHub={() => setActivePillar('hub')}
+            onDateChange={setSelectedDate}
+            onOpenDatePicker={() => setIsDatePickerVisible(true)}
+            onShowToast={showToast}
+          />
+        )}
+
+        {/* 4. PILLAR 3: RUNNING & CARDIO SCREEN */}
+        {activePillar === 'running' && (
+          <RunningScreen
+            db={db}
+            selectedDate={selectedDate}
+            onBackToHub={() => setActivePillar('hub')}
+            onDateChange={setSelectedDate}
+            onOpenDatePicker={() => setIsDatePickerVisible(true)}
+            onShowToast={showToast}
+          />
+        )}
+
+        {/* 5. PILLAR 4: BODY TRACKER SCREEN */}
+        {activePillar === 'body' && (
+          <BodyTrackerScreen
+            db={db}
+            selectedDate={selectedDate}
+            onBackToHub={() => setActivePillar('hub')}
+            onDateChange={setSelectedDate}
+            onOpenDatePicker={() => setIsDatePickerVisible(true)}
+            onShowToast={showToast}
+          />
+        )}
+
+        {/* 6. PILLAR 5: FULL ANALYTICS DASHBOARD */}
+        {activePillar === 'analytics' && (
           <AnalyticsScreen
             db={db}
+            onBackToHub={() => setActivePillar('hub')}
             onSelectDateAndNavigate={(newDate) => {
               setSelectedDate(newDate);
-              setActiveTab('workout');
+              setActivePillar('workout');
             }}
             onShowToast={showToast}
           />
         )}
 
-        {activeTab === 'macros' && (
-          <MacroScreen
-            db={db}
-            selectedDate={selectedDate}
-            onShowToast={showToast}
-          />
-        )}
-
-        {activeTab === 'settings' && (
+        {/* 7. SETTINGS & CSV SETUP */}
+        {activePillar === 'settings' && (
           <ImportExportScreen
             db={db}
+            onBackToHub={() => setActivePillar('hub')}
             onShowToast={showToast}
           />
         )}
@@ -185,11 +211,6 @@ function MainApp({
           }}
         />
       </Modal>
-
-      {/* Bottom Navigation Tab Bar (Hidden in Full Screen Logger) */}
-      {!isFullScreenLogger && (
-        <TabBar activeTab={activeTab} onTabSelect={setActiveTab} />
-      )}
     </SafeAreaView>
   );
 }

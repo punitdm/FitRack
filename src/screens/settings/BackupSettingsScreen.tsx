@@ -1,25 +1,31 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { ArrowLeft, Download, Upload, ShieldCheck, FileSpreadsheet } from 'lucide-react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  ArrowLeft,
+  Download,
+  Upload,
+  ShieldCheck,
+  FileSpreadsheet,
+  FileCode,
+  CheckCircle2,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import Papa from 'papaparse';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { Card } from '../../components/common/Card';
-import { Button } from '../../components/common/Button';
+import {
+  exportFullJsonBackup,
+  smartImportFile,
+} from '../../utils/jsonBackup';
 import {
   exportExerciseLogs,
   exportMealLogs,
   exportBodyStats,
   exportExerciseCatalog,
 } from '../../utils/csvExporter';
-import {
-  detectCsvType,
-  importExerciseLogsCsv,
-  importMealLogsCsv,
-  importBodyStatsCsv,
-} from '../../utils/csvImporter';
 
 interface BackupSettingsScreenProps {
   db: SQLite.SQLiteDatabase;
@@ -32,60 +38,40 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
   onBack,
   onShowToast,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExportingJson, setIsExportingJson] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
 
-  const handleExportExercises = async () => {
+  // 1. Export Full JSON
+  const handleExportJson = async () => {
     try {
-      setIsExporting(true);
-      const res = await exportExerciseLogs(db);
-      if (res.success) onShowToast('success', res.message);
-      else onShowToast('error', res.message);
+      setIsExportingJson(true);
+      const res = await exportFullJsonBackup(db);
+      if (res.success) {
+        onShowToast('success', res.message);
+      } else {
+        onShowToast('error', res.message);
+      }
     } finally {
-      setIsExporting(false);
+      setIsExportingJson(false);
     }
   };
 
-  const handleExportMeals = async () => {
-    try {
-      setIsExporting(true);
-      const res = await exportMealLogs(db);
-      if (res.success) onShowToast('success', res.message);
-      else onShowToast('error', res.message);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleExportBodyStats = async () => {
-    try {
-      setIsExporting(true);
-      const res = await exportBodyStats(db);
-      if (res.success) onShowToast('success', res.message);
-      else onShowToast('error', res.message);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleExportCatalog = async () => {
-    try {
-      setIsExporting(true);
-      const res = await exportExerciseCatalog(db);
-      if (res.success) onShowToast('success', res.message);
-      else onShowToast('error', res.message);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
+  // 2. Import JSON or CSV
   const handleImportFile = async () => {
     try {
       setIsImporting(true);
       const pickerRes = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv', '*/*'],
+        type: [
+          'application/json',
+          'text/json',
+          'text/csv',
+          'text/comma-separated-values',
+          'application/csv',
+          '*/*',
+        ],
         copyToCacheDirectory: true,
       });
 
@@ -99,125 +85,199 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
         encoding: FileSystem.EncodingType.UTF8,
       });
 
-      // Parse headers to auto-detect CSV type
-      const parsed = Papa.parse<string[]>(content, { preview: 1 });
-      const headers = parsed.data && parsed.data.length > 0 ? parsed.data[0] : [];
-      const detectedType = detectCsvType(headers);
-
-      let importRes;
-      if (detectedType === 'exercises') {
-        importRes = await importExerciseLogsCsv(db, content);
-      } else if (detectedType === 'macros') {
-        importRes = await importMealLogsCsv(db, content);
-      } else if (detectedType === 'stats') {
-        importRes = await importBodyStatsCsv(db, content);
+      const res = await smartImportFile(db, content, file.name);
+      if (res.success) {
+        onShowToast('success', res.message);
       } else {
-        // Fallback try exercise logs
-        importRes = await importExerciseLogsCsv(db, content);
-      }
-
-      if (importRes.success) {
-        onShowToast('success', importRes.message);
-      } else {
-        onShowToast('error', importRes.message);
+        onShowToast('error', res.message);
       }
     } catch (e: any) {
-      console.error(e);
       onShowToast('error', `Import failed: ${e.message}`);
     } finally {
       setIsImporting(false);
     }
   };
 
+  // 3. Optional CSV Exports for Excel
+  const handleCsvExport = async (type: 'exercises' | 'meals' | 'body' | 'catalog') => {
+    try {
+      setIsExportingCsv(true);
+      let res;
+      if (type === 'exercises') res = await exportExerciseLogs(db);
+      else if (type === 'meals') res = await exportMealLogs(db);
+      else if (type === 'body') res = await exportBodyStats(db);
+      else res = await exportExerciseCatalog(db);
+
+      if (res.success) onShowToast('success', res.message);
+      else onShowToast('error', res.message);
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Top Bar */}
-      <View style={[styles.topBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Top Header */}
+      <View style={[styles.headerRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.7}>
-          <ArrowLeft size={22} color={colors.text} />
-          <Text style={[styles.backText, { color: colors.text }]}>Settings</Text>
+          <ArrowLeft size={20} color={colors.primary} />
+          <Text style={[styles.backBtnText, { color: colors.primary }]}>Setup</Text>
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Backup & Data</Text>
-        <View style={{ width: 50 }} />
+        <Text style={[styles.screenTitle, { color: colors.text }]}>Data Backup & Restore</Text>
+        <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView style={styles.scrollContent} contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}>
-        {/* Privacy Card */}
-        <Card style={[styles.privacyCard, { backgroundColor: `${colors.primary}12`, borderColor: colors.primary }]}>
-          <ShieldCheck size={20} color={colors.primary} />
-          <Text style={[styles.privacyText, { color: colors.text }]}>
-            FitRack is 100% offline. Export CSV backups regularly so you never lose your workout history.
+      <View style={styles.bodySection}>
+        {/* ================= 1. PRIMARY JSON BACKUP (SUPABASE & WEBAPP READY) ================= */}
+        <View
+          style={[
+            styles.heroJsonCard,
+            {
+              backgroundColor: isDark ? '#111827' : '#F0F9FF',
+              borderColor: isDark ? '#38BDF8' : '#7DD3FC',
+            },
+          ]}
+        >
+          <View style={styles.heroTopHeader}>
+            <View style={styles.badgeRow}>
+              <View style={[styles.formatBadge, { backgroundColor: '#38BDF820', borderColor: '#38BDF8' }]}>
+                <FileCode size={13} color="#38BDF8" />
+                <Text style={[styles.formatBadgeText, { color: '#38BDF8' }]}>UNIVERSAL JSON BACKUP</Text>
+              </View>
+              <Text style={[styles.recommendedTag, { color: '#22C55E' }]}>✦ WebApp & Cloud Ready</Text>
+            </View>
+          </View>
+
+          <Text style={[styles.heroCardTitle, { color: colors.text }]}>
+            Complete Single-File Backup
           </Text>
-        </Card>
-
-        {/* CSV Export Options */}
-        <Card style={[styles.card, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <View style={styles.cardHeaderRow}>
-            <Download size={20} color={colors.primary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Export CSV Backups</Text>
-          </View>
-          <Text style={[styles.cardSub, { color: colors.textMuted }]}>
-            Export your data into standard CSV spreadsheets compatible with FitNotes, Google Sheets, and Excel:
-          </Text>
-
-          <View style={styles.exportButtonsList}>
-            <Button
-              title="Export Workout Logs (ExerciseLogs.csv)"
-              icon={<FileSpreadsheet size={16} color={colors.textInverse} />}
-              variant="primary"
-              size="md"
-              onPress={handleExportExercises}
-              loading={isExporting}
-            />
-
-            <Button
-              title="Export Meal Logs (MealLogs.csv)"
-              variant="secondary"
-              size="md"
-              onPress={handleExportMeals}
-              loading={isExporting}
-            />
-
-            <Button
-              title="Export Body Measurements (BodyStats.csv)"
-              variant="secondary"
-              size="md"
-              onPress={handleExportBodyStats}
-              loading={isExporting}
-            />
-
-            <Button
-              title="Export Exercise Catalog (Exercises.csv)"
-              variant="secondary"
-              size="md"
-              onPress={handleExportCatalog}
-              loading={isExporting}
-            />
-          </View>
-        </Card>
-
-        {/* CSV Import */}
-        <Card style={[styles.card, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <View style={styles.cardHeaderRow}>
-            <Upload size={20} color={colors.secondary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Import CSV Backup</Text>
-          </View>
-          <Text style={[styles.cardSub, { color: colors.textMuted }]}>
-            Restore past logs from previously exported FitRack files, FitNotes CSV backups, or custom spreadsheets.
+          <Text style={[styles.heroCardDesc, { color: colors.textSecondary }]}>
+            Exports your complete app in 1 type-safe file: Workouts, Sets, Indian Meals, Running Splits, and Body Weight. Ready for 2-way sync with Supabase and Mac WebApp.
           </Text>
 
-          <Button
-            title="Select & Import CSV File"
-            icon={<Upload size={16} color={colors.text} />}
-            variant="outline"
-            size="md"
-            onPress={handleImportFile}
-            loading={isImporting}
-            style={{ marginTop: spacing.xs }}
-          />
+          <View style={styles.jsonButtonsRow}>
+            {/* Export JSON Button */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, { backgroundColor: '#38BDF8' }]}
+              onPress={handleExportJson}
+              disabled={isExportingJson}
+              activeOpacity={0.8}
+            >
+              {isExportingJson ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Download size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryActionText}>Export Full JSON</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Import JSON/CSV Button */}
+            <TouchableOpacity
+              style={[
+                styles.secondaryActionBtn,
+                { backgroundColor: isDark ? '#1E293B' : '#FFFFFF', borderColor: colors.border },
+              ]}
+              onPress={handleImportFile}
+              disabled={isImporting}
+              activeOpacity={0.8}
+            >
+              {isImporting ? (
+                <ActivityIndicator size="small" color={colors.text} />
+              ) : (
+                <>
+                  <Upload size={18} color={colors.text} />
+                  <Text style={[styles.secondaryActionText, { color: colors.text }]}>
+                    Import File (.json / .csv)
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ================= 2. SECURITY & PRIVACY CARD ================= */}
+        <Card style={[styles.privacyCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+          <ShieldCheck size={20} color="#22C55E" />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.privacyTitle, { color: colors.text }]}>100% Offline & Private</Text>
+            <Text style={[styles.privacyDesc, { color: colors.textMuted }]}>
+              All data is stored directly in your phone's encrypted SQLite database. You have full ownership of your backup files.
+            </Text>
+          </View>
         </Card>
-      </ScrollView>
-    </View>
+
+        {/* ================= 3. OPTIONAL SPREADSHEET CSV EXPORT ================= */}
+        <View style={styles.csvSection}>
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>
+            SPREADSHEET EXPORT (EXCEL / GOOGLE SHEETS)
+          </Text>
+
+          <Card style={[styles.csvOptionsCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+            <TouchableOpacity
+              style={[styles.csvRowItem, { borderBottomColor: colors.border }]}
+              onPress={() => handleCsvExport('exercises')}
+              disabled={isExportingCsv}
+              activeOpacity={0.7}
+            >
+              <FileSpreadsheet size={18} color="#22C55E" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.csvItemTitle, { color: colors.text }]}>Export Workouts (.csv)</Text>
+                <Text style={[styles.csvItemDesc, { color: colors.textMuted }]}>Exercise sets, weights, reps & volume</Text>
+              </View>
+              <Download size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.csvRowItem, { borderBottomColor: colors.border }]}
+              onPress={() => handleCsvExport('meals')}
+              disabled={isExportingCsv}
+              activeOpacity={0.7}
+            >
+              <FileSpreadsheet size={18} color="#F59E0B" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.csvItemTitle, { color: colors.text }]}>Export Nutrition Logs (.csv)</Text>
+                <Text style={[styles.csvItemDesc, { color: colors.textMuted }]}>Daily calories, protein, carbs & actual food</Text>
+              </View>
+              <Download size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.csvRowItem, { borderBottomColor: colors.border }]}
+              onPress={() => handleCsvExport('body')}
+              disabled={isExportingCsv}
+              activeOpacity={0.7}
+            >
+              <FileSpreadsheet size={18} color="#A855F7" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.csvItemTitle, { color: colors.text }]}>Export Body Stats (.csv)</Text>
+                <Text style={[styles.csvItemDesc, { color: colors.textMuted }]}>Body weight, body fat & measurements</Text>
+              </View>
+              <Download size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.csvRowItem}
+              onPress={() => handleCsvExport('catalog')}
+              disabled={isExportingCsv}
+              activeOpacity={0.7}
+            >
+              <FileSpreadsheet size={18} color="#38BDF8" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.csvItemTitle, { color: colors.text }]}>Export Exercise Catalog (.csv)</Text>
+                <Text style={[styles.csvItemDesc, { color: colors.textMuted }]}>All preseeded and custom exercises</Text>
+              </View>
+              <Download size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </Card>
+        </View>
+      </View>
+    </ScrollView>
   );
 };
 
@@ -225,11 +285,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  topBar: {
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
   },
@@ -237,55 +300,149 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    padding: 4,
+    paddingVertical: 4,
   },
-  backText: {
+  backBtnText: {
     ...typography.titleSmall,
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '700',
   },
-  headerTitle: {
+  screenTitle: {
     ...typography.titleMedium,
-    fontSize: 17,
+    fontSize: 16,
+    fontWeight: '800',
   },
-  scrollContent: {
-    flex: 1,
+  bodySection: {
+    padding: 16,
+    gap: 16,
+  },
+  heroJsonCard: {
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1.5,
+    gap: 10,
+  },
+  heroTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  formatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  formatBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  recommendedTag: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  heroCardTitle: {
+    ...typography.titleMedium,
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  heroCardDesc: {
+    ...typography.caption,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  jsonButtonsRow: {
+    gap: 10,
+    marginTop: 6,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 46,
+    borderRadius: 14,
+  },
+  primaryActionText: {
+    ...typography.titleSmall,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  secondaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  secondaryActionText: {
+    ...typography.titleSmall,
+    fontWeight: '800',
+    fontSize: 13,
   },
   privacyCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    padding: spacing.md,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 14,
+    borderRadius: 16,
   },
-  privacyText: {
-    flex: 1,
+  privacyTitle: {
+    ...typography.titleSmall,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  privacyDesc: {
     ...typography.caption,
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 2,
   },
-  card: {
-    padding: spacing.lg,
-    borderRadius: borderRadius.xl,
+  csvSection: {
+    gap: 10,
+  },
+  sectionTitle: {
+    ...typography.titleSmall,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    paddingLeft: 4,
+  },
+  csvOptionsCard: {
+    borderRadius: 18,
+    padding: 4,
     borderWidth: 1,
   },
-  cardHeaderRow: {
+  csvRowItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: 6,
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
   },
-  cardTitle: {
+  csvItemTitle: {
     ...typography.titleSmall,
-    fontSize: 16,
+    fontSize: 13,
+    fontWeight: '700',
   },
-  cardSub: {
+  csvItemDesc: {
     ...typography.caption,
-    fontSize: 12,
-    lineHeight: 18,
-    marginBottom: spacing.md,
-  },
-  exportButtonsList: {
-    gap: 8,
+    fontSize: 11,
+    marginTop: 1,
   },
 });

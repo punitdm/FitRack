@@ -32,6 +32,9 @@ import {
   CustomFood,
   ExerciseProgressionPoint,
   SupersetGroup,
+  RunningLog,
+  RunningSplit,
+  HubSummary,
 } from '../types/database';
 import { PRESEEDED_EXERCISES, PRESEEDED_ROUTINES, PRESEEDED_FOODS } from './seedData';
 import { normalizeDateString, getTodayISO, formatShortDate } from '../utils/dateUtils';
@@ -189,6 +192,20 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     );
   `);
 
+  // 10. running_logs
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS running_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      distance_km REAL NOT NULL,
+      duration_seconds INTEGER NOT NULL,
+      pace_seconds_per_km INTEGER,
+      splits_json TEXT,
+      calories_burned INTEGER DEFAULT 0,
+      notes TEXT
+    );
+  `);
+
   // Indexes
   await db.execAsync(`
     CREATE INDEX IF NOT EXISTS idx_sessions_date ON workout_sessions(date);
@@ -198,6 +215,7 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_hydration_date ON hydration_logs(date);
     CREATE INDEX IF NOT EXISTS idx_stats_date ON body_stats(date);
     CREATE INDEX IF NOT EXISTS idx_tpl_ex ON template_exercises(template_id);
+    CREATE INDEX IF NOT EXISTS idx_running_date ON running_logs(date);
   `);
 
   // Seed standard exercises if empty
@@ -237,15 +255,12 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     }
   }
 
-  // Seed standard foods if empty
-  const foodCount = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM custom_foods');
-  if (!foodCount || foodCount.count === 0) {
-    for (const f of PRESEEDED_FOODS) {
-      await db.runAsync(
-        'INSERT OR IGNORE INTO custom_foods (name, serving_size_g, calories, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?)',
-        [f.name, f.serving_size_g, f.calories, f.protein, f.carbs, f.fat]
-      );
-    }
+  // Seed Indian custom foods (Always insert or update so user gets latest actual diet)
+  for (const f of PRESEEDED_FOODS) {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO custom_foods (name, serving_size_g, calories, protein, carbs, fat) VALUES (?, ?, ?, ?, ?, ?)',
+      [f.name, f.serving_size_g, f.calories, f.protein, f.carbs, f.fat]
+    );
   }
 }
 
@@ -1348,6 +1363,23 @@ export async function addHydration(
   return { date, amount_ml: nextAmount, target_ml: targetMl };
 }
 
+export async function saveHydrationLog(
+  db: SQLite.SQLiteDatabase,
+  date: string,
+  amountMl: number,
+  targetMl: number = 3000
+): Promise<HydrationLog> {
+  await db.runAsync(
+    `INSERT INTO hydration_logs (date, amount_ml, target_ml)
+     VALUES (?, ?, ?)
+     ON CONFLICT(date) DO UPDATE SET
+       amount_ml = excluded.amount_ml,
+       target_ml = excluded.target_ml`,
+    [date, amountMl, targetMl]
+  );
+  return { date, amount_ml: amountMl, target_ml: targetMl };
+}
+
 export async function resetHydration(
   db: SQLite.SQLiteDatabase,
   date: string,
@@ -1758,6 +1790,275 @@ export async function clearAllUserData(db: SQLite.SQLiteDatabase): Promise<void>
     DELETE FROM macro_logs;
     DELETE FROM hydration_logs;
     DELETE FROM body_stats;
+    DELETE FROM running_logs;
     DELETE FROM exercises WHERE is_custom = 1;
   `);
 }
+
+// ---------------- RUNNING & CARDIO ----------------
+
+export async function getRunningLogsForDate(
+  db: SQLite.SQLiteDatabase,
+  date: string
+): Promise<RunningLog[]> {
+  try {
+    const directRuns = await db.getAllAsync<RunningLog>(
+      'SELECT * FROM running_logs WHERE date = ? ORDER BY id DESC',
+      [date]
+    );
+
+    const workoutRuns = await db.getAllAsync<{
+      id: number;
+      date: string;
+      distance_val: number;
+      time_seconds: number;
+      exercise_name: string;
+    }>(
+      `SELECT el.id, ws.date, el.distance_val, el.time_seconds, e.name as exercise_name
+       FROM exercise_logs el
+       JOIN workout_sessions ws ON el.session_id = ws.id
+       JOIN exercises e ON el.exercise_id = e.id
+       WHERE ws.date = ? AND (el.distance_val > 0 OR e.category = 'Cardio')
+       ORDER BY el.id DESC`,
+      [date]
+    );
+
+    const convertedWorkoutRuns: RunningLog[] = workoutRuns
+      .filter((w) => w.distance_val > 0 || w.time_seconds > 0)
+      .map((w) => {
+        const dist = w.distance_val > 0 ? w.distance_val : 1.0;
+        const dur = w.time_seconds > 0 ? w.time_seconds : 0;
+        const pace = dist > 0 && dur > 0 ? Math.round(dur / dist) : 0;
+        return {
+          id: -w.id,
+          date: w.date,
+          distance_km: dist,
+          duration_seconds: dur,
+          pace_seconds_per_km: pace,
+          splits_json: null,
+          calories_burned: Math.round(dist * 65),
+          notes: w.exercise_name,
+        };
+      });
+
+    return [...directRuns, ...convertedWorkoutRuns];
+  } catch (e) {
+    console.error('getRunningLogsForDate error:', e);
+    return [];
+  }
+}
+
+export async function getAllRunningLogs(
+  db: SQLite.SQLiteDatabase,
+  limit: number = 50
+): Promise<RunningLog[]> {
+  try {
+    const directRuns = await db.getAllAsync<RunningLog>(
+      'SELECT * FROM running_logs ORDER BY date DESC, id DESC LIMIT ?',
+      [limit]
+    );
+
+    const workoutRuns = await db.getAllAsync<{
+      id: number;
+      date: string;
+      distance_val: number;
+      time_seconds: number;
+      exercise_name: string;
+    }>(
+      `SELECT el.id, ws.date, el.distance_val, el.time_seconds, e.name as exercise_name
+       FROM exercise_logs el
+       JOIN workout_sessions ws ON el.session_id = ws.id
+       JOIN exercises e ON el.exercise_id = e.id
+       WHERE el.distance_val > 0 OR e.category = 'Cardio'
+       ORDER BY ws.date DESC, el.id DESC LIMIT ?`,
+      [limit]
+    );
+
+    const convertedWorkoutRuns: RunningLog[] = workoutRuns
+      .filter((w) => w.distance_val > 0 || w.time_seconds > 0)
+      .map((w) => {
+        const dist = w.distance_val > 0 ? w.distance_val : 1.0;
+        const dur = w.time_seconds > 0 ? w.time_seconds : 0;
+        const pace = dist > 0 && dur > 0 ? Math.round(dur / dist) : 0;
+        return {
+          id: -w.id,
+          date: w.date,
+          distance_km: dist,
+          duration_seconds: dur,
+          pace_seconds_per_km: pace,
+          splits_json: null,
+          calories_burned: Math.round(dist * 65),
+          notes: w.exercise_name,
+        };
+      });
+
+    const combined = [...directRuns, ...convertedWorkoutRuns];
+    combined.sort((a, b) => b.date.localeCompare(a.date));
+    return combined.slice(0, limit);
+  } catch (e) {
+    console.error('getAllRunningLogs error:', e);
+    return [];
+  }
+}
+
+export async function saveRunningLog(
+  db: SQLite.SQLiteDatabase,
+  date: string,
+  distanceKm: number,
+  durationSeconds: number,
+  paceSeconds: number,
+  splitsJson?: string,
+  caloriesBurned: number = 0,
+  notes?: string
+): Promise<number> {
+  const res = await db.runAsync(
+    `INSERT INTO running_logs (date, distance_km, duration_seconds, pace_seconds_per_km, splits_json, calories_burned, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [date, distanceKm, durationSeconds, paceSeconds, splitsJson || null, caloriesBurned, notes || null]
+  );
+  return res.lastInsertRowId;
+}
+
+export async function deleteRunningLog(
+  db: SQLite.SQLiteDatabase,
+  id: number
+): Promise<void> {
+  await db.runAsync('DELETE FROM running_logs WHERE id = ?', [id]);
+}
+
+// ---------------- 4-PILLARS HUB SUMMARY ----------------
+
+export async function getTodayHubSummary(
+  db: SQLite.SQLiteDatabase,
+  date: string
+): Promise<HubSummary> {
+  try {
+    // 1. Workout metrics
+    const sess = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM workout_sessions WHERE date = ?',
+      [date]
+    );
+    let totalSets = 0;
+    let totalVolumeKg = 0;
+    let exerciseCount = 0;
+
+    if (sess) {
+      const logs = await db.getAllAsync<{ weight_kg: number; reps: number; exercise_id: number }>(
+        'SELECT weight_kg, reps, exercise_id FROM exercise_logs WHERE session_id = ?',
+        [sess.id]
+      );
+      totalSets = logs.length;
+      totalVolumeKg = Math.round(
+        logs.reduce((acc, l) => acc + (l.weight_kg || 0) * (l.reps || 0), 0)
+      );
+      const exSet = new Set(logs.map((l) => l.exercise_id));
+      exerciseCount = exSet.size;
+    }
+
+    // 2. Nutrition metrics
+    const macros = await db.getFirstAsync<MacroLog>(
+      'SELECT * FROM macro_logs WHERE date = ?',
+      [date]
+    );
+    const hydration = await db.getFirstAsync<HydrationLog>(
+      'SELECT * FROM hydration_logs WHERE date = ?',
+      [date]
+    );
+
+    // 3. Running metrics
+    const runs = await db.getAllAsync<RunningLog>(
+      'SELECT * FROM running_logs WHERE date = ?',
+      [date]
+    );
+    const allRuns = await db.getAllAsync<RunningLog>(
+      'SELECT * FROM running_logs ORDER BY date DESC LIMIT 1'
+    );
+
+    const todayDistanceKm = runs.reduce((acc, r) => acc + (r.distance_km || 0), 0);
+    const todayDurationSeconds = runs.reduce((acc, r) => acc + (r.duration_seconds || 0), 0);
+    const avgPaceSec =
+      todayDistanceKm > 0 ? Math.round(todayDurationSeconds / todayDistanceKm) : 0;
+    const paceMin = Math.floor(avgPaceSec / 60);
+    const paceSec = avgPaceSec % 60;
+    const todayPaceFormatted =
+      todayDistanceKm > 0 ? `${paceMin}'${paceSec < 10 ? '0' : ''}${paceSec}" /km` : "0'00\" /km";
+
+    // 4. Body stats metrics
+    const latestStat = await db.getFirstAsync<BodyStats>(
+      'SELECT * FROM body_stats WHERE weight_kg IS NOT NULL ORDER BY date DESC LIMIT 1'
+    );
+    const prevStat = await db.getFirstAsync<BodyStats>(
+      'SELECT * FROM body_stats WHERE weight_kg IS NOT NULL AND date < ? ORDER BY date DESC LIMIT 1',
+      [latestStat?.date || date]
+    );
+
+    let weightChangeWeekKg: number | null = null;
+    if (latestStat?.weight_kg && prevStat?.weight_kg) {
+      weightChangeWeekKg = Math.round((latestStat.weight_kg - prevStat.weight_kg) * 10) / 10;
+    }
+
+    return {
+      workout: {
+        totalSets,
+        totalVolumeKg,
+        exerciseCount,
+        durationMinutes: totalSets > 0 ? Math.round(totalSets * 3) : 0,
+      },
+      nutrition: {
+        caloriesConsumed: macros?.total_calories || 0,
+        calorieTarget: 2400,
+        proteinConsumed: Math.round(macros?.total_protein || 0),
+        proteinTarget: 180,
+        carbsConsumed: Math.round(macros?.total_carbs || 0),
+        carbsTarget: 250,
+        fatConsumed: Math.round(macros?.total_fat || 0),
+        fatTarget: 75,
+        waterMl: hydration?.amount_ml || 0,
+        waterTargetMl: hydration?.target_ml || 3000,
+      },
+      running: {
+        todayDistanceKm: Math.round(todayDistanceKm * 100) / 100,
+        todayDurationSeconds,
+        todayPaceFormatted,
+        elevationMeters: 0,
+        recentRunsCount: runs.length,
+      },
+      body: {
+        latestWeightKg: latestStat?.weight_kg || null,
+        weightChangeWeekKg,
+        bodyFatPct: latestStat?.body_fat || null,
+        lastWeighInDate: latestStat?.date,
+      },
+    };
+  } catch (e) {
+    console.error('getTodayHubSummary error:', e);
+    return {
+      workout: { totalSets: 0, totalVolumeKg: 0, exerciseCount: 0, durationMinutes: 0 },
+      nutrition: {
+        caloriesConsumed: 0,
+        calorieTarget: 2400,
+        proteinConsumed: 0,
+        proteinTarget: 180,
+        carbsConsumed: 0,
+        carbsTarget: 250,
+        fatConsumed: 0,
+        fatTarget: 75,
+        waterMl: 0,
+        waterTargetMl: 3000,
+      },
+      running: {
+        todayDistanceKm: 0,
+        todayDurationSeconds: 0,
+        todayPaceFormatted: "0'00\" /km",
+        elevationMeters: 0,
+        recentRunsCount: 0,
+      },
+      body: {
+        latestWeightKg: null,
+        weightChangeWeekKg: null,
+        bodyFatPct: null,
+      },
+    };
+  }
+}
+

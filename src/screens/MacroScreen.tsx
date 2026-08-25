@@ -10,48 +10,67 @@ import {
   Platform,
 } from 'react-native';
 import {
+  ArrowLeft,
   Utensils,
   Save,
-  CheckCircle2,
-  PieChart as PieIcon,
-  Flame,
-  Info,
-  BookOpen,
   Plus,
+  Droplets,
+  BookOpen,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
-import { MacroLog } from '../types/database';
-import { getMacroLog, saveMacroLog } from '../db/database';
+import { MacroLog, HydrationLog } from '../types/database';
+import {
+  getMacroLog,
+  saveMacroLog,
+  getHydrationLog,
+  saveHydrationLog,
+} from '../db/database';
+import { formatDisplayDate, shiftDate, getTodayISO } from '../utils/dateUtils';
 import { Card } from '../components/common/Card';
-import { Button } from '../components/common/Button';
 import { FoodCatalogModal } from '../components/macros/FoodCatalogModal';
 
 interface MacroScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
+  onBackToHub?: () => void;
+  onDateChange?: (newDate: string) => void;
+  onOpenDatePicker?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
 }
 
 export const MacroScreen: React.FC<MacroScreenProps> = ({
   db,
   selectedDate,
+  onBackToHub,
+  onDateChange,
+  onOpenDatePicker,
   onShowToast,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const [calories, setCalories] = useState<string>('');
   const [protein, setProtein] = useState<string>('');
   const [carbs, setCarbs] = useState<string>('');
   const [fat, setFat] = useState<string>('');
   const [actualFood, setActualFood] = useState<string>('');
-  const [isSaving, setIsSaving] = useState(false);
   const [isFoodModalVisible, setIsFoodModalVisible] = useState(false);
+  const [targetCalories, setTargetCalories] = useState<number>(2400);
 
-  // Load existing macro entry for selectedDate
+  // Water
+  const [waterMl, setWaterMl] = useState<number>(0);
+  const [waterTargetMl, setWaterTargetMl] = useState<number>(3500);
+
   const loadData = useCallback(async () => {
     try {
-      const log = await getMacroLog(db, selectedDate);
+      const [log, hydro] = await Promise.all([
+        getMacroLog(db, selectedDate),
+        getHydrationLog(db, selectedDate),
+      ]);
+
       if (log) {
         setCalories(log.total_calories ? String(log.total_calories) : '');
         setProtein(log.total_protein ? String(log.total_protein) : '');
@@ -65,9 +84,15 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
         setFat('');
         setActualFood('');
       }
+
+      if (hydro) {
+        setWaterMl(hydro.amount_ml || 0);
+        setWaterTargetMl(hydro.target_ml || 3500);
+      } else {
+        setWaterMl(0);
+      }
     } catch (e: any) {
       console.error(e);
-      onShowToast('error', `Failed to load macros: ${e.message}`);
     }
   }, [db, selectedDate]);
 
@@ -75,22 +100,26 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
     loadData();
   }, [loadData]);
 
-  // Macro calculation metrics
   const pVal = parseFloat(protein) || 0;
   const cVal = parseFloat(carbs) || 0;
   const fVal = parseFloat(fat) || 0;
   const calcCalories = pVal * 4 + cVal * 4 + fVal * 9;
+  const curCal = parseInt(calories, 10) || Math.round(calcCalories) || 0;
+  const remainingCal = Math.max(0, targetCalories - curCal);
 
-  const totalMacroGrams = pVal + cVal + fVal;
-  const pPct = totalMacroGrams > 0 ? Math.round((pVal / totalMacroGrams) * 100) : 0;
-  const cPct = totalMacroGrams > 0 ? Math.round((cVal / totalMacroGrams) * 100) : 0;
-  const fPct = totalMacroGrams > 0 ? Math.round((fVal / totalMacroGrams) * 100) : 0;
-
-  const handleAutoFillCalories = () => {
-    setCalories(String(Math.round(calcCalories)));
+  const handlePrevDay = () => {
+    if (onDateChange) {
+      onDateChange(shiftDate(selectedDate, -1));
+    }
   };
 
-  const handleAddFoodFromCatalog = (
+  const handleNextDay = () => {
+    if (onDateChange) {
+      onDateChange(shiftDate(selectedDate, 1));
+    }
+  };
+
+  const handleAddFoodFromCatalog = async (
     foodName: string,
     fCalories: number,
     fProtein: number,
@@ -107,125 +136,300 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
     setFat(String(Math.round(nextF * 10) / 10));
     setCalories(String(nextCal));
 
-    setActualFood((prev) => (prev ? `${prev}\n• ${foodName}` : `• ${foodName}`));
-    onShowToast('success', `Added ${foodName}! (+${fProtein}g protein)`);
+    const updatedFood = actualFood ? `${actualFood}\n• ${foodName}` : `• ${foodName}`;
+    setActualFood(updatedFood);
+
+    // Auto save immediately
+    await saveMacroLog(db, {
+      date: selectedDate,
+      total_calories: nextCal,
+      total_protein: nextP,
+      total_carbs: nextC,
+      total_fat: nextF,
+      actual_food: updatedFood,
+    });
+
+    onShowToast('success', `Added ${foodName} (+${fProtein}g Pro)`);
   };
 
-  const handleSave = async () => {
-    try {
-      setIsSaving(true);
-      const log: MacroLog = {
-        date: selectedDate,
-        total_calories: parseInt(calories, 10) || Math.round(calcCalories) || 0,
-        total_protein: parseFloat(protein) || 0,
-        total_carbs: parseFloat(carbs) || 0,
-        total_fat: parseFloat(fat) || 0,
-        actual_food: actualFood.trim(),
-      };
+  const handleAddWater = async (amount: number) => {
+    const nextAmount = waterMl + amount;
+    setWaterMl(nextAmount);
+    await saveHydrationLog(db, selectedDate, nextAmount, waterTargetMl);
+    onShowToast('info', `Water: ${(nextAmount / 1000).toFixed(2)} L 💧`);
+  };
 
-      await saveMacroLog(db, log);
-      onShowToast('success', 'Nutrition saved successfully! 🥗');
-    } catch (e: any) {
-      console.error(e);
-      onShowToast('error', `Failed to save macros: ${e.message}`);
-    } finally {
-      setIsSaving(false);
-    }
+  const handleManualSave = async () => {
+    await saveMacroLog(db, {
+      date: selectedDate,
+      total_calories: parseInt(calories, 10) || Math.round(calcCalories) || 0,
+      total_protein: parseFloat(protein) || 0,
+      total_carbs: parseFloat(carbs) || 0,
+      total_fat: parseFloat(fat) || 0,
+      actual_food: actualFood.trim(),
+    });
+    onShowToast('success', 'Nutrition log saved! 🥗');
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* 1. TOP APP BAR */}
+      <View style={[styles.topAppBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        {onBackToHub ? (
+          <TouchableOpacity style={styles.backBtn} onPress={onBackToHub} activeOpacity={0.7}>
+            <ArrowLeft size={20} color="#F59E0B" />
+            <Text style={styles.backBtnText}>Hub</Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={[styles.titleText, { color: colors.text }]}>Nutrition</Text>
+        )}
+
+        {/* Date Navigator with Calendar Trigger */}
+        <View style={[styles.dateNavWrapper, { backgroundColor: colors.surfaceHighlight, borderColor: colors.border }]}>
+          <TouchableOpacity style={styles.arrowBtn} onPress={handlePrevDay} activeOpacity={0.6}>
+            <ChevronLeft size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.dateCenterBtn}
+            onPress={onOpenDatePicker}
+            activeOpacity={0.7}
+          >
+            <Calendar size={14} color="#F59E0B" />
+            <Text style={[styles.dateText, { color: colors.text }]}>
+              {formatDisplayDate(selectedDate)}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.arrowBtn} onPress={handleNextDay} activeOpacity={0.6}>
+            <ChevronRight size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.catalogBtn, { backgroundColor: isDark ? '#F59E0B20' : '#FEF3C7', borderColor: '#F59E0B' }]}
+          onPress={() => setIsFoodModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <BookOpen size={18} color="#F59E0B" />
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Top Summary Card */}
-        <Card style={[styles.summaryCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <View style={styles.summaryTopRow}>
-            <View>
-              <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>TOTAL CALORIES</Text>
-              <Text style={[styles.summaryCalories, { color: colors.text }]}>
-                {calories || (calcCalories > 0 ? Math.round(calcCalories) : '0')}
-                <Text style={[styles.unit, { color: colors.textSecondary }]}> kcal</Text>
+        {/* ================= 2. CALORIE HERO CARD ================= */}
+        <View
+          style={[
+            styles.calorieHeroCard,
+            {
+              backgroundColor: isDark ? '#181512' : '#FFFDF7',
+              borderColor: isDark ? '#F59E0B' : '#FCD34D',
+            },
+          ]}
+        >
+          <View style={styles.ringCenterBox}>
+            <Text style={[styles.ringSubLabel, { color: colors.textMuted }]}>CALORIES CONSUMED</Text>
+            <Text style={[styles.ringCalBig, { color: colors.text }]}>
+              {curCal.toLocaleString()}{' '}
+              <Text style={{ fontSize: 16, color: colors.textMuted }}>/ {targetCalories} kcal</Text>
+            </Text>
+            <Text style={[styles.remainingText, { color: remainingCal > 0 ? '#F59E0B' : '#22C55E' }]}>
+              {remainingCal > 0 ? `${remainingCal} kcal remaining` : 'Target met! 🎯'}
+            </Text>
+          </View>
+
+          {/* Macro Progress Bars */}
+          <View style={styles.macroBarsRow}>
+            <View style={styles.macroCol}>
+              <View style={styles.macroColHeader}>
+                <Text style={[styles.macroName, { color: colors.textMuted }]}>PROTEIN</Text>
+                <Text style={[styles.macroNums, { color: colors.text }]}>{pVal}g / 180g</Text>
+              </View>
+              <View style={[styles.miniTrack, { backgroundColor: colors.surfaceHighlight }]}>
+                <View
+                  style={[
+                    styles.miniFill,
+                    {
+                      width: `${Math.min(100, (pVal / 180) * 100)}%`,
+                      backgroundColor: '#38BDF8',
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+
+            <View style={styles.macroCol}>
+              <View style={styles.macroColHeader}>
+                <Text style={[styles.macroName, { color: colors.textMuted }]}>CARBS</Text>
+                <Text style={[styles.macroNums, { color: colors.text }]}>{cVal}g / 250g</Text>
+              </View>
+              <View style={[styles.miniTrack, { backgroundColor: colors.surfaceHighlight }]}>
+                <View
+                  style={[
+                    styles.miniFill,
+                    {
+                      width: `${Math.min(100, (cVal / 250) * 100)}%`,
+                      backgroundColor: '#F59E0B',
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+
+            <View style={styles.macroCol}>
+              <View style={styles.macroColHeader}>
+                <Text style={[styles.macroName, { color: colors.textMuted }]}>FAT</Text>
+                <Text style={[styles.macroNums, { color: colors.text }]}>{fVal}g / 75g</Text>
+              </View>
+              <View style={[styles.miniTrack, { backgroundColor: colors.surfaceHighlight }]}>
+                <View
+                  style={[
+                    styles.miniFill,
+                    {
+                      width: `${Math.min(100, (fVal / 75) * 100)}%`,
+                      backgroundColor: '#EC4899',
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* ================= 3. QUICK MEAL TILES (Indian Diet) ================= */}
+        <View style={styles.mealsSection}>
+          <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>LOGGED MEALS</Text>
+
+          {/* Food Items List */}
+          {actualFood ? (
+            <View
+              style={[
+                styles.foodListBox,
+                {
+                  backgroundColor: isDark ? '#131110' : '#FFFFFF',
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Text style={[styles.foodListText, { color: colors.text }]}>{actualFood}</Text>
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.emptyFoodBox,
+                {
+                  backgroundColor: isDark ? '#131110' : '#FFFFFF',
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Utensils size={24} color={colors.textMuted} />
+              <Text style={[styles.emptyFoodText, { color: colors.textMuted }]}>
+                No meals logged yet. Tap '+ Add Food' below to pick Roti, Dahi, Daal, Whey, Chicken, etc.
+              </Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.addFoodMainBtn, { backgroundColor: '#F59E0B' }]}
+            onPress={() => setIsFoodModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <Plus size={18} color="#FFFFFF" strokeWidth={3} />
+            <Text style={styles.addFoodBtnText}>+ Add Food from Indian Catalog</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ================= 4. HYDRATION TRACKER ================= */}
+        <View
+          style={[
+            styles.waterCard,
+            {
+              backgroundColor: isDark ? '#0E1722' : '#F0F9FF',
+              borderColor: isDark ? '#1E3A5F' : '#BAE6FD',
+            },
+          ]}
+        >
+          <View style={styles.waterHeaderRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Droplets size={20} color="#0284C7" />
+              <Text style={[styles.waterTitle, { color: isDark ? '#38BDF8' : '#0284C7' }]}>
+                {(waterMl / 1000).toFixed(2)}L{' '}
+                <Text style={{ fontSize: 13, color: colors.textMuted }}>
+                  / {(waterTargetMl / 1000).toFixed(1)}L
+                </Text>
               </Text>
             </View>
 
-            {calcCalories > 0 && calories !== String(Math.round(calcCalories)) && (
-              <TouchableOpacity
-                style={[styles.autoFillBtn, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
-                onPress={handleAutoFillCalories}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.autoFillText, { color: colors.primary }]}>Use Calc ({Math.round(calcCalories)})</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Macro Progress Ratio Bar */}
-          <View style={[styles.ratioBarTrack, { backgroundColor: colors.surfaceHighlight }]}>
-            <View style={[styles.ratioSegment, { width: `${pPct}%`, backgroundColor: colors.primary }]} />
-            <View style={[styles.ratioSegment, { width: `${cPct}%`, backgroundColor: colors.secondary }]} />
-            <View style={[styles.ratioSegment, { width: `${fPct}%`, backgroundColor: colors.accent }]} />
-          </View>
-
-          {/* Ratio Legend */}
-          <View style={styles.ratioLegendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>Protein: {pVal}g ({pPct}%)</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.secondary }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>Carbs: {cVal}g ({cPct}%)</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.accent }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>Fat: {fVal}g ({fPct}%)</Text>
-            </View>
-          </View>
-        </Card>
-
-        {/* Macro Inputs Card with Food Catalog Shortcut */}
-        <Card style={[styles.inputsCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Macro Targets / Actuals</Text>
             <TouchableOpacity
-              style={[styles.foodCatalogBtn, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
-              onPress={() => setIsFoodModalVisible(true)}
+              style={[styles.waterAddPill, { backgroundColor: isDark ? '#38BDF820' : '#E0F2FE' }]}
+              onPress={() => handleAddWater(250)}
               activeOpacity={0.7}
             >
-              <BookOpen size={14} color={colors.primary} />
-              <Text style={[styles.foodCatalogBtnText, { color: colors.primary }]}>Food Database</Text>
+              <Text style={[styles.waterAddPillText, { color: isDark ? '#38BDF8' : '#0284C7' }]}>
+                +250 ml
+              </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Calories Input */}
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Total Calories (kcal)</Text>
-            <TextInput
-              style={[styles.textInput, { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text }]}
-              keyboardType="number-pad"
-              value={calories}
-              onChangeText={setCalories}
-              placeholder="e.g. 2200"
-              placeholderTextColor={colors.textDisabled}
+          <View style={[styles.waterTrack, { backgroundColor: isDark ? '#1E293B' : '#E2E8F0' }]}>
+            <View
+              style={[
+                styles.waterFill,
+                {
+                  width: `${Math.min(100, (waterMl / waterTargetMl) * 100)}%`,
+                  backgroundColor: isDark ? '#38BDF8' : '#0284C7',
+                },
+              ]}
             />
           </View>
+        </View>
 
-          {/* 3 Macro Cols: Protein, Carbs, Fat */}
-          <View style={styles.macroInputsRow}>
-            <View style={styles.macroInputCol}>
-              <Text style={[styles.inputLabel, { color: colors.primary }]}>Protein (g)</Text>
+        {/* ================= 5. MANUAL EDIT INPUTS ================= */}
+        <View
+          style={[
+            styles.manualSection,
+            {
+              backgroundColor: isDark ? '#131110' : '#FFFFFF',
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>MANUAL MACRO OVERRIDE</Text>
+
+          <View style={styles.manualRow}>
+            <View style={styles.manualCol}>
+              <Text style={[styles.manualLabel, { color: colors.textMuted }]}>CALORIES</Text>
               <TextInput
                 style={[
-                  styles.textInput,
-                  styles.macroInput,
-                  { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text },
-                  pVal > 0 && { borderColor: colors.primary },
+                  styles.manualInput,
+                  {
+                    backgroundColor: isDark ? '#1F1A14' : '#F8FAFC',
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+                keyboardType="number-pad"
+                value={calories}
+                onChangeText={setCalories}
+                placeholder="2400"
+                placeholderTextColor={colors.textDisabled}
+              />
+            </View>
+
+            <View style={styles.manualCol}>
+              <Text style={[styles.manualLabel, { color: colors.textMuted }]}>PROTEIN (G)</Text>
+              <TextInput
+                style={[
+                  styles.manualInput,
+                  {
+                    backgroundColor: isDark ? '#1F1A14' : '#F8FAFC',
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
                 ]}
                 keyboardType="decimal-pad"
                 value={protein}
@@ -235,79 +439,70 @@ export const MacroScreen: React.FC<MacroScreenProps> = ({
               />
             </View>
 
-            <View style={styles.macroInputCol}>
-              <Text style={[styles.inputLabel, { color: colors.secondary }]}>Carbs (g)</Text>
+            <View style={styles.manualCol}>
+              <Text style={[styles.manualLabel, { color: colors.textMuted }]}>CARBS (G)</Text>
               <TextInput
                 style={[
-                  styles.textInput,
-                  styles.macroInput,
-                  { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text },
-                  cVal > 0 && { borderColor: colors.secondary },
+                  styles.manualInput,
+                  {
+                    backgroundColor: isDark ? '#1F1A14' : '#F8FAFC',
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
                 ]}
                 keyboardType="decimal-pad"
                 value={carbs}
                 onChangeText={setCarbs}
-                placeholder="220"
+                placeholder="250"
                 placeholderTextColor={colors.textDisabled}
               />
             </View>
 
-            <View style={styles.macroInputCol}>
-              <Text style={[styles.inputLabel, { color: colors.accent }]}>Fat (g)</Text>
+            <View style={styles.manualCol}>
+              <Text style={[styles.manualLabel, { color: colors.textMuted }]}>FAT (G)</Text>
               <TextInput
                 style={[
-                  styles.textInput,
-                  styles.macroInput,
-                  { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text },
-                  fVal > 0 && { borderColor: colors.accent },
+                  styles.manualInput,
+                  {
+                    backgroundColor: isDark ? '#1F1A14' : '#F8FAFC',
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
                 ]}
                 keyboardType="decimal-pad"
                 value={fat}
                 onChangeText={setFat}
-                placeholder="65"
+                placeholder="70"
                 placeholderTextColor={colors.textDisabled}
               />
             </View>
           </View>
-        </Card>
 
-        {/* Actual Food Log Card */}
-        <Card style={[styles.foodCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-          <View style={styles.foodCardHeader}>
-            <Utensils size={18} color={colors.primary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Meal Notes / Actual Foods</Text>
-          </View>
-          <TextInput
-            style={[styles.foodInput, { backgroundColor: colors.surfaceElevated, borderColor: colors.border, color: colors.text }]}
-            multiline
-            numberOfLines={4}
-            value={actualFood}
-            onChangeText={setActualFood}
-            placeholder="e.g. Breakfast: 4 eggs, oats with scoop whey&#10;Lunch: Chicken breast, 200g white rice&#10;Dinner: Salmon, sweet potato, salad"
-            placeholderTextColor={colors.textDisabled}
-          />
-        </Card>
-
-        {/* Save Button */}
-        <Button
-          title="Save Daily Nutrition"
-          icon={<Save size={18} color={colors.textInverse} />}
-          variant="primary"
-          size="lg"
-          onPress={handleSave}
-          loading={isSaving}
-          style={styles.saveBtn}
-        />
+          <TouchableOpacity
+            style={[
+              styles.saveManualBtn,
+              {
+                backgroundColor: isDark ? '#26201A' : '#FEF3C7',
+                borderColor: '#F59E0B',
+              },
+            ]}
+            onPress={handleManualSave}
+            activeOpacity={0.7}
+          >
+            <Save size={16} color="#F59E0B" />
+            <Text style={styles.saveManualText}>Save Nutrition Log</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
-      {/* Offline Custom Food Database Modal */}
+      {/* Food Database Catalog Modal */}
       <FoodCatalogModal
         visible={isFoodModalVisible}
         db={db}
         onClose={() => setIsFoodModalVisible(false)}
-        onAddFoodToLog={handleAddFoodFromCatalog}
+        onSelectFood={handleAddFoodFromCatalog}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 };
 
@@ -315,155 +510,244 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollContent: {
-    padding: spacing.lg,
-    paddingBottom: 40,
-    gap: spacing.md,
-  },
-  summaryCard: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
-    borderWidth: 1,
-  },
-  summaryTopRow: {
+  topAppBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  summaryLabel: {
-    ...typography.caption,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  summaryCalories: {
-    ...typography.mono,
-    fontSize: 30,
-    marginTop: 2,
-  },
-  unit: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  autoFillBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-  },
-  autoFillText: {
-    ...typography.caption,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  ratioBarTrack: {
-    height: 10,
-    borderRadius: 5,
-    flexDirection: 'row',
-    overflow: 'hidden',
-    marginBottom: spacing.md,
-  },
-  ratioSegment: {
-    height: '100%',
-  },
-  ratioLegendRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendText: {
-    ...typography.caption,
-    fontSize: 10,
-  },
-  inputsCard: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
-    borderWidth: 1,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  cardTitle: {
-    ...typography.titleSmall,
-    fontSize: 15,
-  },
-  foodCatalogBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-  },
-  foodCatalogBtnText: {
-    ...typography.caption,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  inputGroup: {
-    marginBottom: spacing.md,
-  },
-  inputLabel: {
-    ...typography.caption,
-    fontWeight: '700',
-    fontSize: 11,
-    marginBottom: 6,
-  },
-  textInput: {
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    borderWidth: 1,
-    fontSize: 15,
+    borderBottomWidth: 1,
   },
-  macroInputsRow: {
+  backBtn: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
   },
-  macroInputCol: {
-    flex: 1,
+  backBtnText: {
+    ...typography.titleSmall,
+    color: '#F59E0B',
+    fontWeight: '700',
+    fontSize: 14,
   },
-  macroInput: {
+  titleText: {
+    ...typography.titleMedium,
+  },
+  dateNavWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  arrowBtn: {
+    padding: 6,
+  },
+  dateCenterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  dateText: {
+    ...typography.caption,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  catalogBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 40,
+    gap: 16,
+  },
+  calorieHeroCard: {
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1.5,
+  },
+  ringCenterBox: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  ringSubLabel: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  ringCalBig: {
     ...typography.mono,
+    fontSize: 38,
+    fontWeight: '900',
+    marginVertical: 2,
+  },
+  remainingText: {
+    ...typography.caption,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  macroBarsRow: {
+    marginTop: 14,
+    gap: 10,
+  },
+  macroCol: {
+    gap: 4,
+  },
+  macroColHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  macroName: {
+    ...typography.caption,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  macroNums: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  miniTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  miniFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  mealsSection: {
+    gap: 8,
+  },
+  sectionHeader: {
+    ...typography.titleSmall,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  foodListBox: {
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+  },
+  foodListText: {
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  emptyFoodBox: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+  },
+  emptyFoodText: {
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  addFoodMainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 48,
+    borderRadius: 16,
+    marginTop: 4,
+  },
+  addFoodBtnText: {
+    ...typography.titleSmall,
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+  waterCard: {
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    gap: 10,
+  },
+  waterHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  waterTitle: {
+    ...typography.mono,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  waterAddPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  waterAddPillText: {
+    ...typography.caption,
+    fontWeight: '800',
+    fontSize: 11,
+  },
+  waterTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  waterFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  manualSection: {
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    gap: 12,
+  },
+  manualRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  manualCol: {
+    flex: 1,
+    gap: 4,
+  },
+  manualLabel: {
+    ...typography.caption,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  manualInput: {
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    fontSize: 14,
     textAlign: 'center',
   },
-  foodCard: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
-    borderWidth: 1,
-  },
-  foodCardHeader: {
+  saveManualBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  foodInput: {
-    ...typography.bodySecondary,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    minHeight: 100,
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: 14,
     borderWidth: 1,
-    textAlignVertical: 'top',
+    marginTop: 4,
   },
-  saveBtn: {
-    width: '100%',
-    marginTop: spacing.xs,
+  saveManualText: {
+    ...typography.titleSmall,
+    color: '#F59E0B',
+    fontWeight: '800',
+    fontSize: 13,
   },
 });

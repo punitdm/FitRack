@@ -22,12 +22,17 @@ import { getTodayISO } from '../utils/dateUtils';
 
 interface ImportExportScreenProps {
   db: SQLite.SQLiteDatabase;
+  onBackToHub?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
 }
 
 type SubScreen = 'none' | 'theme' | 'backup' | 'catalog' | 'bodystats' | 'about';
 
-export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({ db, onShowToast }) => {
+export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
+  db,
+  onBackToHub,
+  onShowToast,
+}) => {
   const { colors, isDark, accent } = useTheme();
   const [activeSubScreen, setActiveSubScreen] = useState<SubScreen>('none');
 
@@ -94,47 +99,41 @@ export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({ db, onSh
 
   const menuGroups = [
     {
-      title: 'CUSTOMIZATION & PREFERENCES',
+      title: '1. DATA BACKUP & RESTORE (JSON / CSV)',
       items: [
         {
-          key: 'theme' as SubScreen,
-          icon: <Palette size={20} color={colors.primary} />,
-          title: 'Appearance & Theme',
-          subtitle: `${isDark ? 'Dark Mode' : 'Light Mode'} • ${currentAccentName}`,
+          key: 'backup' as SubScreen,
+          icon: <HardDrive size={20} color={colors.primary} />,
+          title: 'Full JSON Backup & Restore',
+          subtitle: 'Single-file backup for Supabase, WebApp, and Mobile sync',
         },
       ],
     },
     {
-      title: 'TRAINING & DATA',
+      title: '2. THEME & APPEARANCE',
+      items: [
+        {
+          key: 'theme' as SubScreen,
+          icon: <Palette size={20} color={colors.secondary} />,
+          title: 'Theme Type & Colors',
+          subtitle: `${isDark ? 'Dark Mode' : 'Light Mode'} • ${currentAccentName} Accent`,
+        },
+      ],
+    },
+    {
+      title: 'TRAINING CATALOG & INFO',
       items: [
         {
           key: 'catalog' as SubScreen,
-          icon: <Dumbbell size={20} color={colors.secondary} />,
+          icon: <Dumbbell size={20} color={colors.accent} />,
           title: 'Exercise Catalog',
           subtitle: 'Manage muscle categories and custom exercises',
         },
         {
-          key: 'bodystats' as SubScreen,
-          icon: <Scale size={20} color={colors.accent} />,
-          title: 'Body Stats & Weigh-Ins',
-          subtitle: 'Track body weight and circumference logs',
-        },
-        {
-          key: 'backup' as SubScreen,
-          icon: <HardDrive size={20} color={colors.primary} />,
-          title: 'Backup & Data Export (CSV)',
-          subtitle: 'Export to Excel / Google Sheets or import backups',
-        },
-      ],
-    },
-    {
-      title: 'APP INFO',
-      items: [
-        {
           key: 'about' as SubScreen,
           icon: <Info size={20} color="#94A3B8" />,
           title: 'About FitRack',
-          subtitle: 'Version 1.0.0 • SQLite Offline Storage & Reset',
+          subtitle: '100% Offline SQLite Storage • Version 1.2.0',
         },
       ],
     },
@@ -146,6 +145,17 @@ export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({ db, onSh
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
     >
+      {/* Back to Hub Header */}
+      {onBackToHub && (
+        <TouchableOpacity
+          style={styles.backHubHeader}
+          onPress={onBackToHub}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.backHubText, { color: colors.primary }]}>‹ Back to Hub</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Privacy Guarantee Header */}
       <View style={[styles.privacyBanner, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         <ShieldCheck size={22} color={colors.primary} />
@@ -197,6 +207,15 @@ export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({ db, onSh
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  backHubHeader: {
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  backHubText: {
+    ...typography.titleSmall,
+    fontSize: 15,
+    fontWeight: '800',
   },
   scrollContent: {
     padding: spacing.lg,

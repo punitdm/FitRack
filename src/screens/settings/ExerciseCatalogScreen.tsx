@@ -125,7 +125,7 @@ export const ExerciseCatalogScreen: React.FC<ExerciseCatalogScreenProps> = ({
           {/* Category Selector */}
           <Text style={[styles.formSub, { color: colors.textSecondary }]}>Muscle Group:</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catChipsScroll}>
-            {CATEGORIES.filter((c) => c !== 'All' && c !== 'Custom').map((cat) => (
+            {CATEGORIES.filter((c: string) => c !== 'All').map((cat: string) => (
               <TouchableOpacity
                 key={cat}
                 style={[
@@ -176,7 +176,7 @@ export const ExerciseCatalogScreen: React.FC<ExerciseCatalogScreenProps> = ({
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryFilterRow}>
-          {CATEGORIES.map((c) => {
+          {CATEGORIES.map((c: string) => {
             const isSelected = selectedCategory === c;
             return (
               <TouchableOpacity

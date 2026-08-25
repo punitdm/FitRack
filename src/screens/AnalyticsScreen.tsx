@@ -35,7 +35,8 @@ import { MacroLog, BodyStats } from '../types/database';
 
 interface AnalyticsScreenProps {
   db: SQLite.SQLiteDatabase;
-  onSelectDateAndNavigate: (date: string) => void;
+  onBackToHub?: () => void;
+  onSelectDateAndNavigate?: (date: string) => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
 }
 
@@ -43,6 +44,7 @@ type AnalysisTab = 'breakdown' | 'calendar' | 'records' | 'macros' | 'weight';
 
 export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   db,
+  onBackToHub,
   onSelectDateAndNavigate,
   onShowToast,
 }) => {
@@ -196,6 +198,17 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Top Header */}
+      {onBackToHub && (
+        <View style={[styles.hubTopBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <TouchableOpacity style={styles.backHubBtn} onPress={onBackToHub} activeOpacity={0.7}>
+            <Text style={[styles.backHubText, { color: colors.secondary }]}>‹ Back to Hub</Text>
+          </TouchableOpacity>
+          <Text style={[styles.hubTitleText, { color: colors.text }]}>Analytics Dashboard</Text>
+          <View style={{ width: 60 }} />
+        </View>
+      )}
+
       {/* Top Analysis Subtabs (FitNotes Style) */}
       <View style={[styles.topTabsBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
@@ -372,7 +385,9 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
               selectedDate={referenceDate}
               onSelectDate={(date) => {
                 setReferenceDate(date);
-                onSelectDateAndNavigate(date);
+                if (onSelectDateAndNavigate) {
+                  onSelectDateAndNavigate(date);
+                }
               }}
               monthsToShow={3}
             />
@@ -532,6 +547,27 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  hubTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  backHubBtn: {
+    paddingVertical: 4,
+  },
+  backHubText: {
+    ...typography.titleSmall,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  hubTitleText: {
+    ...typography.titleMedium,
+    fontSize: 16,
+    fontWeight: '800',
   },
   topTabsBar: {
     borderBottomWidth: 1,

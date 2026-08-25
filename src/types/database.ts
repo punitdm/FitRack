@@ -185,3 +185,54 @@ export interface ExerciseProgressionPoint {
   weight?: number;
   displayDate: string;
 }
+
+export interface RunningSplit {
+  km: number;
+  paceSeconds: number;
+  paceFormatted: string; // e.g. 5'12"
+}
+
+export interface RunningLog {
+  id: number;
+  date: string; // YYYY-MM-DD
+  distance_km: number;
+  duration_seconds: number;
+  pace_seconds_per_km: number;
+  splits_json?: string | null;
+  calories_burned?: number;
+  notes?: string | null;
+}
+
+export interface HubSummary {
+  workout: {
+    totalSets: number;
+    totalVolumeKg: number;
+    exerciseCount: number;
+    durationMinutes: number;
+  };
+  nutrition: {
+    caloriesConsumed: number;
+    calorieTarget: number;
+    proteinConsumed: number;
+    proteinTarget: number;
+    carbsConsumed: number;
+    carbsTarget: number;
+    fatConsumed: number;
+    fatTarget: number;
+    waterMl: number;
+    waterTargetMl: number;
+  };
+  running: {
+    todayDistanceKm: number;
+    todayDurationSeconds: number;
+    todayPaceFormatted: string;
+    elevationMeters: number;
+    recentRunsCount: number;
+  };
+  body: {
+    latestWeightKg: number | null;
+    weightChangeWeekKg: number | null;
+    bodyFatPct: number | null;
+    lastWeighInDate?: string;
+  };
+}

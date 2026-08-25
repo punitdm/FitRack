@@ -24,6 +24,7 @@ import {
 import { addDays, subDays, format, parseISO } from 'date-fns';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
+import { formatDisplayDate } from '../utils/dateUtils';
 import {
   Exercise,
   ExerciseWithLogs,
@@ -53,6 +54,7 @@ import { Button } from '../components/common/Button';
 interface WorkoutScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
+  onBackToHub?: () => void;
   onDateChange?: (newDate: string) => void;
   onFullScreenToggle?: (isFullScreen: boolean) => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
@@ -61,6 +63,7 @@ interface WorkoutScreenProps {
 export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   db,
   selectedDate,
+  onBackToHub,
   onDateChange,
   onFullScreenToggle,
   onShowToast,
@@ -334,7 +337,19 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   );
 
   return (
-    <View {...panResponder.panHandlers} style={[styles.container, { backgroundColor: '#121316' }]}>
+    <View {...panResponder.panHandlers} style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Top Back to Hub Header */}
+      {onBackToHub && !isReorderMode && (
+        <View style={[styles.topHubBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <TouchableOpacity style={styles.backHubBtn} onPress={onBackToHub} activeOpacity={0.7}>
+            <Text style={[styles.backHubText, { color: colors.primary }]}>‹ Back to Hub</Text>
+          </TouchableOpacity>
+          <View style={[styles.datePillHeader, { backgroundColor: colors.surfaceHighlight }]}>
+            <Text style={[styles.datePillText, { color: colors.text }]}>{formatDisplayDate(selectedDate)}</Text>
+          </View>
+        </View>
+      )}
+
       {/* ================= REORDER / MULTI-SELECT ACTION BAR (Screenshot 3) ================= */}
       {isReorderMode ? (
         <View style={styles.reorderActionBar}>
@@ -571,6 +586,35 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  topHubBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1F2937',
+  },
+  backHubBtn: {
+    paddingVertical: 4,
+  },
+  backHubText: {
+    ...typography.titleSmall,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  datePillHeader: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  datePillText: {
+    ...typography.caption,
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '700',
   },
   reorderActionBar: {
     flexDirection: 'row',

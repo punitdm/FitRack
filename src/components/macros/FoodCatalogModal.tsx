@@ -21,7 +21,8 @@ interface FoodCatalogModalProps {
   visible: boolean;
   db: SQLite.SQLiteDatabase;
   onClose: () => void;
-  onAddFoodToLog: (foodName: string, calories: number, protein: number, carbs: number, fat: number) => void;
+  onAddFoodToLog?: (foodName: string, calories: number, protein: number, carbs: number, fat: number) => void;
+  onSelectFood?: (foodName: string, calories: number, protein: number, carbs: number, fat: number) => void;
 }
 
 export const FoodCatalogModal: React.FC<FoodCatalogModalProps> = ({
@@ -29,6 +30,7 @@ export const FoodCatalogModal: React.FC<FoodCatalogModalProps> = ({
   db,
   onClose,
   onAddFoodToLog,
+  onSelectFood,
 }) => {
   const { colors } = useTheme();
 
@@ -89,7 +91,11 @@ export const FoodCatalogModal: React.FC<FoodCatalogModalProps> = ({
   const handleConfirmAdd = () => {
     if (!selectedFood) return;
     const foodEntry = `${selectedFood.name} (${grams}g)`;
-    onAddFoodToLog(foodEntry, calcCal, calcP, calcC, calcF);
+    if (onSelectFood) {
+      onSelectFood(foodEntry, calcCal, calcP, calcC, calcF);
+    } else if (onAddFoodToLog) {
+      onAddFoodToLog(foodEntry, calcCal, calcP, calcC, calcF);
+    }
     onClose();
   };
 

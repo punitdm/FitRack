@@ -63,7 +63,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
     for (const cat of CATEGORIES) {
       if (cat === 'All') {
         counts[cat] = exercises.length;
-      } else if (cat === 'Custom') {
+      } else if ((cat as string) === 'Custom') {
         counts[cat] = exercises.filter((e) => e.is_custom === 1).length;
       } else {
         counts[cat] = exercises.filter(
@@ -139,7 +139,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
           </Text>
 
           <View style={styles.categoryGrid}>
-            {CATEGORIES.filter((c) => c !== 'All').map((cat) => {
+            {CATEGORIES.filter((c: string) => c !== 'All').map((cat: string) => {
               const catColor = colors.categories[cat] || colors.categories.Custom;
               const count = categoryCounts[cat] || 0;
 
@@ -290,7 +290,7 @@ export const AddExerciseModal: React.FC<AddExerciseModalProps> = ({
 
           <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Category</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryPickerRow}>
-            {CATEGORIES.filter((c) => c !== 'All' && c !== 'Custom').map((cat) => {
+            {CATEGORIES.filter((c: string) => c !== 'All').map((cat: string) => {
               const isSelected = customCategory === cat;
               return (
                 <TouchableOpacity
