@@ -1,5 +1,11 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+} from 'react-native';
+import { TouchableOpacity } from '../../components/common/Touchable';
+import { Text } from '../../components/common/Typography';
 import { ArrowLeft, Moon, Sun, Check } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { ACCENT_PRESETS, AccentKey } from '../../theme/ThemeContext';

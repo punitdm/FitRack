@@ -1,5 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View,
+  StyleSheet,
+} from 'react-native';
+import { TouchableOpacity } from './Touchable';
+import { Text } from './Typography';
 import { Home, Dumbbell, BarChart2, Utensils, Settings } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { TabType } from '../../types/navigation';

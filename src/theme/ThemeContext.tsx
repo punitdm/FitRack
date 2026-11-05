@@ -98,7 +98,38 @@ export interface ThemeColors {
   moderate: string;
   hard: string;
   categories: Record<string, string>;
+  /** One palette per pillar so screens never hard-code hex values. */
+  pillars: Record<PillarKey, PillarPalette>;
+  /** Fixed colours for protein / carbs / fat everywhere macros appear. */
+  macros: { protein: string; carbs: string; fat: string };
 }
+
+export type PillarKey = 'workout' | 'nutrition' | 'running' | 'body' | 'analytics';
+
+export interface PillarPalette {
+  /** Text, icons and key numbers. */
+  accent: string;
+  /** Icon chips, selected pills, progress tracks. */
+  soft: string;
+  /** Faint card tint that identifies the pillar on the hub. */
+  tint: string;
+}
+
+const PILLARS_DARK: Record<PillarKey, PillarPalette> = {
+  workout: { accent: '#22C55E', soft: 'rgba(34, 197, 94, 0.14)', tint: '#141C18' },
+  nutrition: { accent: '#F59E0B', soft: 'rgba(245, 158, 11, 0.14)', tint: '#1D1913' },
+  running: { accent: '#38BDF8', soft: 'rgba(56, 189, 248, 0.14)', tint: '#121B24' },
+  body: { accent: '#A855F7', soft: 'rgba(168, 85, 247, 0.15)', tint: '#1A1524' },
+  analytics: { accent: '#818CF8', soft: 'rgba(129, 140, 248, 0.15)', tint: '#16172A' },
+};
+
+const PILLARS_LIGHT: Record<PillarKey, PillarPalette> = {
+  workout: { accent: '#16A34A', soft: '#DCFCE7', tint: '#F3FBF6' },
+  nutrition: { accent: '#D97706', soft: '#FEF3C7', tint: '#FFFBF2' },
+  running: { accent: '#0284C7', soft: '#E0F2FE', tint: '#F3F9FE' },
+  body: { accent: '#7C3AED', soft: '#F3E8FF', tint: '#FAF6FF' },
+  analytics: { accent: '#4F46E5', soft: '#EDE9FE', tint: '#F6F5FF' },
+};
 
 export function buildThemeColors(mode: ThemeMode, accent: AccentKey): ThemeColors {
   const isDark = mode === 'dark';
@@ -111,8 +142,8 @@ export function buildThemeColors(mode: ThemeMode, accent: AccentKey): ThemeColor
       surfaceElevated: '#181C24',
       surfaceCard: '#1E232E',
       surfaceHighlight: '#272E3C',
-      border: '#252B37',
-      borderLight: '#323B4C',
+      border: '#1F242E',
+      borderLight: '#2C3442',
       borderHighlight: acc.primary,
       primary: acc.primary,
       primaryLight: acc.primaryLight,
@@ -148,6 +179,8 @@ export function buildThemeColors(mode: ThemeMode, accent: AccentKey): ThemeColor
         Triceps: '#A78BFA',
         Custom: '#818CF8',
       },
+      pillars: PILLARS_DARK,
+      macros: { protein: '#38BDF8', carbs: '#F59E0B', fat: '#F472B6' },
     };
   } else {
     // Light Mode (Material 3 Surface Elevation)
@@ -157,8 +190,8 @@ export function buildThemeColors(mode: ThemeMode, accent: AccentKey): ThemeColor
       surfaceElevated: '#F1F5F9',
       surfaceCard: '#FFFFFF',
       surfaceHighlight: '#E2E8F0',
-      border: '#E2E8F0',
-      borderLight: '#CBD5E1',
+      border: '#E7ECF2',
+      borderLight: '#D5DDE7',
       borderHighlight: acc.primaryDark,
       primary: acc.primaryDark,
       primaryLight: acc.primary,
@@ -194,6 +227,8 @@ export function buildThemeColors(mode: ThemeMode, accent: AccentKey): ThemeColor
         Triceps: '#7C3AED',
         Custom: '#4F46E5',
       },
+      pillars: PILLARS_LIGHT,
+      macros: { protein: '#0284C7', carbs: '#D97706', fat: '#DB2777' },
     };
   }
 }

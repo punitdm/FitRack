@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   FlatList,
   StyleSheet,
   ScrollView,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import { Search, Plus, Utensils, Trash2, Check, Scale } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';

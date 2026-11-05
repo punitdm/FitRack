@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
-  TouchableOpacity,
   FlatList,
   StyleSheet,
   ScrollView,
-  TextInput,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import {
   Layers,
   Plus,
@@ -32,6 +31,7 @@ import {
   getAllExercises,
 } from '../../db/database';
 
+import { useUnits } from '../../utils/units';
 interface RoutinesModalProps {
   visible: boolean;
   db: SQLite.SQLiteDatabase;
@@ -48,6 +48,7 @@ export const RoutinesModal: React.FC<RoutinesModalProps> = ({
   onStartRoutine,
 }) => {
   const { colors } = useTheme();
+  const u = useUnits();
 
   const [step, setStep] = useState<'list' | 'create'>('list');
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
@@ -199,7 +200,7 @@ export const RoutinesModal: React.FC<RoutinesModalProps> = ({
                   {isSelected && item.exercises && (
                     <View style={[styles.expandedExercises, { borderTopColor: colors.border }]}>
                       <Text style={[styles.previewHeader, { color: colors.textMuted }]}>
-                        EXERCISES IN THIS ROUTINE:
+                        Exercises in this routine:
                       </Text>
                       {item.exercises.map((e, idx) => (
                         <View key={idx} style={styles.exPreviewRow}>
@@ -208,7 +209,7 @@ export const RoutinesModal: React.FC<RoutinesModalProps> = ({
                           </Text>
                           <Text style={[styles.exPreviewTarget, { color: colors.primary }]}>
                             {e.target_sets} sets × {e.target_reps} reps
-                            {e.target_weight > 0 ? ` @ ${e.target_weight}kg` : ''}
+                            {e.target_weight > 0 ? ` @ ${u.fmt(e.target_weight)}` : ''}
                           </Text>
                         </View>
                       ))}
@@ -304,7 +305,7 @@ export const RoutinesModal: React.FC<RoutinesModalProps> = ({
               <View style={{ flex: 1 }}>
                 <Text style={[styles.selectedExName, { color: colors.text }]}>{item.exercise.name}</Text>
                 <Text style={[styles.selectedExTarget, { color: colors.primary }]}>
-                  {item.targetSets} sets × {item.targetReps} reps @ {item.targetWeight}kg
+                  {item.targetSets} sets × {item.targetReps} reps @ {u.fmt(item.targetWeight)}
                 </Text>
               </View>
               <TouchableOpacity
@@ -428,7 +429,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
     marginBottom: 6,
   },
   exPreviewRow: {

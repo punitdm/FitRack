@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
-  Text,
-  TextInput,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
   RefreshControl,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text, TextInput } from '../components/common/Typography';
 import { Ruler, Scale, Save, Activity, TrendingDown, TrendingUp } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { colors, typography, borderRadius, spacing } from '../theme/theme';
@@ -17,6 +16,7 @@ import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { formatDisplayDate, formatShortDate } from '../utils/dateUtils';
 
+import { useUnits } from '../utils/units';
 interface BodyStatsScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
@@ -28,6 +28,7 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
   selectedDate,
   onShowToast,
 }) => {
+  const u = useUnits();
   const [stats, setStats] = useState<BodyStats>({
     date: selectedDate,
     weight_kg: null,
@@ -91,7 +92,9 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
   };
 
   const updateField = (field: keyof BodyStats, val: string) => {
-    const num = parseFloat(val);
+    const typed = parseFloat(val);
+    // Weight is typed in the chosen unit and stored in kg.
+    const num = field === 'weight_kg' && !isNaN(typed) ? u.fromDisplay(typed) : typed;
     setStats((prev) => ({
       ...prev,
       [field]: isNaN(num) ? null : num,
@@ -117,12 +120,12 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
           <View style={styles.metricColumn}>
             <View style={styles.metricHeader}>
               <Scale size={16} color={colors.primary} />
-              <Text style={styles.metricTitle}>Weight (kg)</Text>
+              <Text style={styles.metricTitle}>Weight ({u.label})</Text>
             </View>
             <TextInput
               style={styles.bigNumericInput}
               keyboardType="decimal-pad"
-              value={stats.weight_kg != null ? String(stats.weight_kg) : ''}
+              value={stats.weight_kg != null ? String(u.toDisplay(stats.weight_kg)) : ''}
               placeholder="0.0"
               placeholderTextColor={colors.textDisabled}
               onChangeText={(v) => updateField('weight_kg', v)}
@@ -140,7 +143,7 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
                     { color: weightDiff >= 0 ? colors.warning : colors.primary },
                   ]}
                 >
-                  {weightDiff > 0 ? `+${weightDiff}` : weightDiff} kg vs last log
+                  {weightDiff > 0 ? '+' : weightDiff < 0 ? '-' : ''}{u.fmt(Math.abs(weightDiff))} vs last log
                 </Text>
               </View>
             )}
@@ -261,11 +264,11 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
             <Text style={styles.historySectionTitle}>Body Stats History ({allStats.length})</Text>
 
             <View style={styles.tableHead}>
-              <Text style={[styles.th, { width: 75 }]}>DATE</Text>
-              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>WEIGHT</Text>
+              <Text style={[styles.th, { width: 75 }]}>Date</Text>
+              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>Weight</Text>
               <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>BF%</Text>
-              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>WAIST</Text>
-              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>CHEST</Text>
+              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>Waist</Text>
+              <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>Chest</Text>
               <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>ARM</Text>
             </View>
 
@@ -275,7 +278,7 @@ export const BodyStatsScreen: React.FC<BodyStatsScreenProps> = ({
                   {formatShortDate(item.date)}
                 </Text>
                 <Text style={[styles.td, { flex: 1, textAlign: 'center', color: colors.primary }]}>
-                  {item.weight_kg != null ? `${item.weight_kg}kg` : '—'}
+                  {item.weight_kg != null ? u.fmt(item.weight_kg) : '—'}
                 </Text>
                 <Text style={[styles.td, { flex: 1, textAlign: 'center', color: colors.secondary }]}>
                   {item.body_fat != null ? `${item.body_fat}%` : '—'}

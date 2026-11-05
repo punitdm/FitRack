@@ -1,5 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import {
+  View,
+  StyleSheet,
+} from 'react-native';
+import { Text } from '../common/Typography';
 import { Flame, Beef, Wheat, Droplet } from 'lucide-react-native';
 import { colors, typography, borderRadius, spacing } from '../../theme/theme';
 import { Card } from '../common/Card';

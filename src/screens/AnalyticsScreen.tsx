@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
-  Text,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
   RefreshControl,
+  Pressable,
+  useWindowDimensions,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text } from '../components/common/Typography';
 import Svg, { G, Circle } from 'react-native-svg';
 import {
   Flame,
@@ -21,35 +23,103 @@ import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
 import {
   getCategoryBreakdown,
   CategoryBreakdownResult,
-  getRepMaxMatrix,
   ExerciseRepMaxRow,
-  getCalendarCategoryDots,
   CalendarDayWorkoutData,
   getRecentMacroLogs,
   getAllBodyStats,
 } from '../db/database';
 import { WorkoutCalendar } from '../components/analytics/WorkoutCalendar';
+import Animated, {
+  useAnimatedRef,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { haptics } from '../utils/haptics';
+import { ProgressOverview } from '../components/progress/ProgressOverview';
+import { NutritionProgress } from '../components/progress/NutritionProgress';
 import { Card } from '../components/common/Card';
 import { formatShortDate, shiftDate, getTodayISO } from '../utils/dateUtils';
 import { MacroLog, BodyStats } from '../types/database';
 
+import { useTabBarSpace } from '../components/common/tabBarSpace';
+import { useUnits } from '../utils/units';
 interface AnalyticsScreenProps {
   db: SQLite.SQLiteDatabase;
   onBackToHub?: () => void;
   onSelectDateAndNavigate?: (date: string) => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
+  /** Bumped when returning to this screen (e.g. after logging a workout). */
+  refreshToken?: number;
 }
 
-type AnalysisTab = 'breakdown' | 'calendar' | 'records' | 'macros' | 'weight';
+type AnalysisTab = 'overview' | 'breakdown' | 'macros' | 'weight';
+
+const TABS: { key: AnalysisTab; label: string }[] = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'breakdown', label: 'Breakdown' },
+  { key: 'macros', label: 'Nutrition' },
+  { key: 'weight', label: 'Body' },
+];
+
+/** One page of the pager: its own vertical scroll + pull to refresh. */
+const TabPage: React.FC<{
+  width: number;
+  refreshing: boolean;
+  onRefresh: () => void;
+  children: React.ReactNode;
+}> = ({ width, refreshing, onRefresh, children }) => {
+  const { colors } = useTheme();
+  const tabBarSpace = useTabBarSpace();
+  return (
+    <ScrollView
+      style={{ width }}
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarSpace }]}
+      showsVerticalScrollIndicator={false}
+      nestedScrollEnabled
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+    >
+      {children}
+    </ScrollView>
+  );
+};
 
 export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   db,
   onBackToHub,
   onSelectDateAndNavigate,
   onShowToast,
+  refreshToken,
 }) => {
   const { colors } = useTheme();
-  const [activeTab, setActiveTab] = useState<AnalysisTab>('breakdown');
+  const u = useUnits();
+  const [activeTab, setActiveTab] = useState<AnalysisTab>('overview');
+  const [overviewKey, setOverviewKey] = useState(0);
+
+  // Swipeable pager: one page per tab.
+  const { width: pageW } = useWindowDimensions();
+  const [tabsW, setTabsW] = useState(0);
+  const pagerRef = useAnimatedRef<Animated.ScrollView>();
+  const scrollX = useSharedValue(0);
+  const pagerScroll = useAnimatedScrollHandler((e) => {
+    scrollX.value = e.contentOffset.x;
+  });
+  const underlineStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: pageW > 0 ? (scrollX.value / pageW) * (tabsW / TABS.length) : 0 }],
+  }));
+  const onPageSettled = (index: number) => {
+    const tab = TABS[Math.max(0, Math.min(TABS.length - 1, index))].key;
+    if (tab !== activeTab) {
+      haptics.select();
+      setActiveTab(tab);
+    }
+  };
+  const goToTab = (index: number) => {
+    const tab = TABS[index].key;
+    if (tab !== activeTab) haptics.select();
+    setActiveTab(tab);
+    pagerRef.current?.scrollTo({ x: index * pageW, animated: true });
+  };
 
   // Breakdown state
   const [period, setPeriod] = useState<'Week' | 'Month' | 'Year' | 'All Time'>('Week');
@@ -59,10 +129,8 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   const [selectedCatIndex, setSelectedCatIndex] = useState<number>(0);
 
   // Records state
-  const [repMaxMatrix, setRepMaxMatrix] = useState<ExerciseRepMaxRow[]>([]);
 
   // Calendar dots state
-  const [calendarDots, setCalendarDots] = useState<Record<string, CalendarDayWorkoutData>>({});
 
   // Macros & Stats state
   const [macros, setMacros] = useState<MacroLog[]>([]);
@@ -73,16 +141,12 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [breakdown, rmMatrix, dots, macroList, statsList] = await Promise.all([
+      const [breakdown, macroList, statsList] = await Promise.all([
         getCategoryBreakdown(db, period, metric, referenceDate),
-        getRepMaxMatrix(db),
-        getCalendarCategoryDots(db),
         getRecentMacroLogs(db, 60),
         getAllBodyStats(db),
       ]);
       setBreakdownData(breakdown);
-      setRepMaxMatrix(rmMatrix);
-      setCalendarDots(dots);
       setMacros(macroList);
       setStats(statsList);
     } catch (err: any) {
@@ -96,6 +160,11 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (refreshToken) loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken]);
 
   // Date Navigator for Breakdown
   const shiftPeriod = (delta: number) => {
@@ -209,47 +278,74 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
         </View>
       )}
 
-      {/* Top Analysis Subtabs (FitNotes Style) */}
-      <View style={[styles.topTabsBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
-          {[
-            { key: 'breakdown' as AnalysisTab, label: 'BREAKDOWN' },
-            { key: 'calendar' as AnalysisTab, label: 'CALENDAR' },
-            { key: 'records' as AnalysisTab, label: 'RECORDS' },
-            { key: 'macros' as AnalysisTab, label: 'NUTRITION' },
-            { key: 'weight' as AnalysisTab, label: 'BODY STATS' },
-          ].map((t) => {
+      {/* Sub-tabs: underline follows the pager as you swipe */}
+      <View
+        style={[styles.topTabsBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}
+        onLayout={(e) => setTabsW(e.nativeEvent.layout.width)}
+      >
+        <View style={styles.tabsRow}>
+          {TABS.map((t, i) => {
             const isActive = activeTab === t.key;
             return (
-              <TouchableOpacity
+              <Pressable
                 key={t.key}
-                style={[styles.topTabItem, isActive && { borderBottomColor: colors.secondary }]}
-                onPress={() => setActiveTab(t.key)}
-                activeOpacity={0.7}
+                style={styles.topTabItem}
+                onPress={() => goToTab(i)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
               >
-                <Text style={[styles.topTabText, { color: isActive ? colors.secondary : colors.textMuted }]}>
+                <Text
+                  style={[styles.topTabText, { color: isActive ? colors.secondary : colors.textMuted }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
                   {t.label}
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
             );
           })}
-        </ScrollView>
+        </View>
+        {tabsW > 0 ? (
+          <Animated.View style={[styles.tabUnderline, { backgroundColor: colors.secondary, width: tabsW / TABS.length }, underlineStyle]} />
+        ) : null}
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={loadData} tintColor={colors.primary} />
-        }
+      <Animated.ScrollView
+        ref={pagerRef}
+        horizontal
+        pagingEnabled
+        bounces={false}
+        overScrollMode="never"
+        showsHorizontalScrollIndicator={false}
+        onScroll={pagerScroll}
+        scrollEventThrottle={16}
+        onMomentumScrollEnd={(e) => onPageSettled(Math.round(e.nativeEvent.contentOffset.x / pageW))}
+        style={styles.pager}
       >
         {/* ================= 1. BREAKDOWN TAB ================= */}
-        {activeTab === 'breakdown' && (
+        <TabPage
+          width={pageW}
+          refreshing={false}
+          onRefresh={() => {
+            setOverviewKey((k) => k + 1);
+            loadData();
+          }}
+        >
+          <ProgressOverview
+            db={db}
+            reloadKey={overviewKey + (refreshToken ?? 0)}
+            onOpenDay={onSelectDateAndNavigate}
+            onShowToast={onShowToast}
+          />
+        </TabPage>
+
+        <TabPage width={pageW} refreshing={isLoading} onRefresh={loadData}>
           <View style={styles.tabSection}>
             {/* Filter Control Header */}
             <Card style={[styles.filterCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
               <View style={[styles.filterRow, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>BREAKDOWN:</Text>
+                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Breakdown:</Text>
                 <TouchableOpacity
                   style={styles.dropdownTrigger}
                   onPress={() => setMetric(metric === 'sets' ? 'volume' : 'sets')}
@@ -261,7 +357,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
               </View>
 
               <View style={[styles.filterRow, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>PERIOD:</Text>
+                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Period:</Text>
                 <View style={styles.periodPillsRow}>
                   {(['Week', 'Month', 'Year', 'All Time'] as const).map((p) => (
                     <TouchableOpacity
@@ -288,7 +384,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
 
               {/* Date Range with Arrows */}
               <View style={[styles.filterRow, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>DATE:</Text>
+                <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>Date:</Text>
                 <View style={styles.dateNavRow}>
                   <TouchableOpacity
                     style={styles.dateArrow}
@@ -338,7 +434,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
                       </View>
 
                       <Text style={[styles.catSetsCount, { color: colors.textSecondary }]}>
-                        {metric === 'sets' ? `${cat.sets} sets` : `${cat.volumeKg.toLocaleString()} kg`}
+                        {metric === 'sets' ? `${cat.sets} sets` : `${u.fmtVolume(cat.volumeKg).value} ${u.fmtVolume(cat.volumeKg).unit}`}
                       </Text>
                       <Text style={[styles.catPct, { color: colors.text }]}>{cat.percentage}%</Text>
                     </TouchableOpacity>
@@ -351,157 +447,46 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
             <View style={styles.summary2x2Grid}>
               <View style={styles.summaryGridRow}>
                 <Card style={[styles.summaryBox, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>TOTAL WORKOUTS</Text>
+                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>Total workouts</Text>
                   <Text style={[styles.summaryBoxVal, { color: colors.text }]}>{breakdownData?.totalWorkouts || 0}</Text>
                 </Card>
                 <Card style={[styles.summaryBox, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>TOTAL SETS</Text>
+                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>Total sets</Text>
                   <Text style={[styles.summaryBoxVal, { color: colors.text }]}>{breakdownData?.totalSets || 0}</Text>
                 </Card>
               </View>
 
               <View style={styles.summaryGridRow}>
                 <Card style={[styles.summaryBox, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>TOTAL REPS</Text>
+                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>Total reps</Text>
                   <Text style={[styles.summaryBoxVal, { color: colors.text }]}>{breakdownData?.totalReps || 0}</Text>
                 </Card>
                 <Card style={[styles.summaryBox, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>TOTAL VOLUME</Text>
+                  <Text style={[styles.summaryBoxLabel, { color: colors.textMuted }]}>Total volume</Text>
                   <Text style={[styles.summaryBoxVal, { color: colors.secondary }]}>
-                    {(breakdownData?.totalVolumeKg || 0).toLocaleString()}
-                    <Text style={[styles.summaryBoxUnit, { color: colors.textSecondary }]}> kgs</Text>
+                    {u.fmtVolume(breakdownData?.totalVolumeKg || 0).value}
+                    <Text style={[styles.summaryBoxUnit, { color: colors.textSecondary }]}> {u.fmtVolume(breakdownData?.totalVolumeKg || 0).unit}</Text>
                   </Text>
                 </Card>
               </View>
             </View>
           </View>
-        )}
-
-        {/* ================= 2. CALENDAR TAB ================= */}
-        {activeTab === 'calendar' && (
-          <View style={styles.tabSection}>
-            <WorkoutCalendar
-              categoryDots={calendarDots}
-              selectedDate={referenceDate}
-              onSelectDate={(date) => {
-                setReferenceDate(date);
-                if (onSelectDateAndNavigate) {
-                  onSelectDateAndNavigate(date);
-                }
-              }}
-              monthsToShow={3}
-            />
-          </View>
-        )}
-
-        {/* ================= 3. RECORDS TAB (1RM - 15RM MATRIX) ================= */}
-        {activeTab === 'records' && (
-          <View style={styles.tabSection}>
-            <Card style={[styles.recordsTableCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-              <Text style={[styles.recordsTableTitle, { color: colors.text }]}>Rep Max Matrix (1 RM – 15 RM)</Text>
-              <Text style={[styles.recordsTableSub, { color: colors.textMuted }]}>
-                Peak weights recorded across every rep count:
-              </Text>
-
-              {repMaxMatrix.length > 0 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-                  <View>
-                    {/* Header Row (Exercise Names) */}
-                    <View style={[styles.rmHeaderRow, { borderBottomColor: colors.borderLight }]}>
-                      <View style={[styles.rmCell, styles.rmRowHeaderCell, { borderRightColor: colors.border }]}>
-                        <Text style={[styles.rmHeaderCellText, { color: colors.secondary }]}>REP</Text>
-                      </View>
-                      {repMaxMatrix.map((ex) => (
-                        <View key={ex.exerciseId} style={[styles.rmCell, styles.rmExHeaderCell]}>
-                          <Text style={[styles.rmExNameText, { color: colors.text }]} numberOfLines={2}>
-                            {ex.exerciseName}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* 1 RM through 15 RM Rows */}
-                    {Array.from({ length: 15 }, (_, i) => i + 1).map((repCount) => (
-                      <View
-                        key={repCount}
-                        style={[
-                          styles.rmDataRow,
-                          { borderBottomColor: colors.border },
-                          repCount % 2 === 0 && { backgroundColor: colors.surfaceElevated },
-                        ]}
-                      >
-                        <View style={[styles.rmCell, styles.rmRowHeaderCell, { borderRightColor: colors.border }]}>
-                          <Text style={[styles.rmRepLabel, { color: colors.textSecondary }]}>{repCount} RM</Text>
-                        </View>
-
-                        {repMaxMatrix.map((ex) => {
-                          const data = ex.repMaxes[repCount];
-                          return (
-                            <View key={ex.exerciseId} style={styles.rmCell}>
-                              <Text
-                                style={[
-                                  styles.rmWeightText,
-                                  { color: colors.textDisabled },
-                                  data && { color: colors.text, fontWeight: '700' },
-                                ]}
-                              >
-                                {data ? `${data.weightKg.toFixed(1)} kgs` : '— —'}
-                              </Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    ))}
-                  </View>
-                </ScrollView>
-              ) : (
-                <Text style={[styles.emptyText, { color: colors.textMuted }]}>No rep records logged yet.</Text>
-              )}
-            </Card>
-          </View>
-        )}
+        </TabPage>
 
         {/* ================= 4. NUTRITION TAB ================= */}
-        {activeTab === 'macros' && (
-          <View style={styles.tabSection}>
-            <Card style={[styles.card, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-              <View style={styles.cardHeader}>
-                <Flame size={16} color={colors.warning} />
-                <Text style={[styles.cardTitle, { color: colors.text }]}>Nutrition Log History</Text>
-              </View>
-
-              {macros.map((m) => (
-                <View key={m.date} style={[styles.macroLogRow, { borderBottomColor: colors.border }]}>
-                  <View style={{ width: 85 }}>
-                    <Text style={[styles.macroDate, { color: colors.textSecondary }]}>{formatShortDate(m.date)}</Text>
-                    <Text style={[styles.macroCalVal, { color: colors.warning }]}>{m.total_calories} kcal</Text>
-                  </View>
-                  <View style={styles.macroPillsCol}>
-                    <View style={styles.macroPillRow}>
-                      <Text style={[styles.macroPill, { color: colors.primary }]}>
-                        P: {m.total_protein}g
-                      </Text>
-                      <Text style={[styles.macroPill, { color: colors.secondary }]}>
-                        C: {m.total_carbs}g
-                      </Text>
-                      <Text style={[styles.macroPill, { color: colors.accent }]}>
-                        F: {m.total_fat}g
-                      </Text>
-                    </View>
-                    {m.actual_food ? (
-                      <Text style={[styles.foodSnippet, { color: colors.textMuted }]} numberOfLines={1}>
-                        {m.actual_food}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-              ))}
-            </Card>
-          </View>
-        )}
+        <TabPage
+          width={pageW}
+          refreshing={false}
+          onRefresh={() => {
+            setOverviewKey((k) => k + 1);
+            loadData();
+          }}
+        >
+          <NutritionProgress db={db} reloadKey={overviewKey + (refreshToken ?? 0)} />
+        </TabPage>
 
         {/* ================= 5. BODY STATS TAB ================= */}
-        {activeTab === 'weight' && (
+        <TabPage width={pageW} refreshing={isLoading} onRefresh={loadData}>
           <View style={styles.tabSection}>
             <Card style={[styles.card, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
               <View style={styles.cardHeader}>
@@ -510,11 +495,11 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
               </View>
 
               <View style={[styles.statsTableHead, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.statsTh, { width: 75, color: colors.textMuted }]}>DATE</Text>
-                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>WEIGHT</Text>
+                <Text style={[styles.statsTh, { width: 75, color: colors.textMuted }]}>Date</Text>
+                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>Weight</Text>
                 <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>BF%</Text>
-                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>WAIST</Text>
-                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>CHEST</Text>
+                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>Waist</Text>
+                <Text style={[styles.statsTh, { flex: 1, textAlign: 'center', color: colors.textMuted }]}>Chest</Text>
               </View>
 
               {stats.map((s) => (
@@ -523,7 +508,7 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
                     {formatShortDate(s.date)}
                   </Text>
                   <Text style={[styles.statsTd, { flex: 1, textAlign: 'center', color: colors.primary }]}>
-                    {s.weight_kg != null ? `${s.weight_kg}kg` : '—'}
+                    {s.weight_kg != null ? u.fmt(s.weight_kg) : '—'}
                   </Text>
                   <Text style={[styles.statsTd, { flex: 1, textAlign: 'center', color: colors.secondary }]}>
                     {s.body_fat != null ? `${s.body_fat}%` : '—'}
@@ -538,8 +523,8 @@ export const AnalyticsScreen: React.FC<AnalyticsScreenProps> = ({
               ))}
             </Card>
           </View>
-        )}
-      </ScrollView>
+        </TabPage>
+      </Animated.ScrollView>
     </View>
   );
 };
@@ -570,17 +555,30 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   topTabsBar: {
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+  },
+  tabUnderline: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    height: 3,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+  },
+  pager: {
+    flex: 1,
   },
   tabsScroll: {
     flexDirection: 'row',
     paddingHorizontal: spacing.md,
   },
   topTabItem: {
-    paddingVertical: 12,
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 3,
-    borderBottomColor: 'transparent',
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 13,
   },
   topTabText: {
     ...typography.caption,
@@ -747,7 +745,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
   },
   summaryBoxVal: {
     ...typography.mono,

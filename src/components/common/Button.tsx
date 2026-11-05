@@ -1,14 +1,14 @@
 import React from 'react';
 import {
-  TouchableOpacity,
-  Text,
   StyleSheet,
   ActivityIndicator,
   ViewStyle,
   TextStyle,
   StyleProp,
 } from 'react-native';
+import { Text } from './Typography';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
+import { ScalePressable } from './Motion';
 
 interface ButtonProps {
   title: string;
@@ -116,11 +116,12 @@ export const Button: React.FC<ButtonProps> = ({
   };
 
   return (
-    <TouchableOpacity
+    <ScalePressable
       style={[styles.button, getContainerStyle(), style]}
       onPress={onPress}
       disabled={disabled || loading}
-      activeOpacity={0.75}
+      pressedScale={0.96}
+      accessibilityLabel={title}
     >
       {loading ? (
         <ActivityIndicator size="small" color={getTextColor()} />
@@ -130,7 +131,7 @@ export const Button: React.FC<ButtonProps> = ({
           <Text style={[styles.text, { color: getTextColor() }, textStyle]}>{title}</Text>
         </>
       )}
-    </TouchableOpacity>
+    </ScalePressable>
   );
 };
 

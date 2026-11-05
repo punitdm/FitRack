@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
-  Text,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
-  TextInput,
   RefreshControl,
   Alert,
   PanResponder,
+  BackHandler,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text, TextInput } from '../components/common/Typography';
 import {
   Plus,
   Dumbbell,
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react-native';
 import { addDays, subDays, format, parseISO } from 'date-fns';
 import * as SQLite from 'expo-sqlite';
-import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
+import { useTheme, typography, borderRadius, spacing, ThemeColors } from '../theme/theme';
 import { formatDisplayDate } from '../utils/dateUtils';
 import {
   Exercise,
@@ -48,9 +48,14 @@ import { CopyWorkoutModal } from '../components/workout/CopyWorkoutModal';
 import { RoutinesModal } from '../components/routines/RoutinesModal';
 import { SupersetModal } from '../components/workout/SupersetModal';
 import { ExerciseDetailScreen } from './ExerciseDetailScreen';
+import { ScreenTransition } from '../components/common/Motion';
+import { CheckInCard } from '../components/workout/CheckInCard';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 
+import { useTabBarSpace } from '../components/common/tabBarSpace';
+import { useUnits } from '../utils/units';
+import { confirmAction } from '../utils/feedback';
 interface WorkoutScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
@@ -69,6 +74,9 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   onShowToast,
 }) => {
   const { colors } = useTheme();
+  const u = useUnits();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tabBarSpace = useTabBarSpace();
 
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [exerciseItems, setExerciseItems] = useState<ExerciseWithLogs[]>([]);
@@ -83,10 +91,35 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
 
   // Dedicated Full Screen Exercise Logger state
   const [selectedExerciseForLogging, setSelectedExerciseForLogging] = useState<ExerciseWithLogs | null>(null);
+  // The list slides back in only after closing the logger, not on first open of the Workout pillar.
+  const openedLogger = useRef(false);
+  useEffect(() => {
+    if (selectedExerciseForLogging) openedLogger.current = true;
+  }, [selectedExerciseForLogging]);
+
+  // Android back: close the full-screen logger / leave reorder mode before leaving the screen.
+  const isReorderModeRef = useRef(false);
+  const hasLoggerOpen = selectedExerciseForLogging !== null;
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (hasLoggerOpen) {
+        setSelectedExerciseForLogging(null);
+        return true;
+      }
+      if (isReorderModeRef.current) {
+        setIsReorderMode(false);
+        setSelectedExerciseIds([]);
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [hasLoggerOpen]);
 
   // Multi-Select & Reorder Mode (Screenshot 3)
   const [isReorderMode, setIsReorderMode] = useState(false);
   const [selectedExerciseIds, setSelectedExerciseIds] = useState<number[]>([]);
+  isReorderModeRef.current = isReorderMode;
 
   const [sessionNotes, setSessionNotes] = useState('');
   const [showNotesInput, setShowNotesInput] = useState(false);
@@ -203,26 +236,22 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   // Delete selected exercises
   const handleDeleteSelected = () => {
     if (selectedExerciseIds.length === 0 || !session) return;
-    Alert.alert(
-      'Delete Exercises',
-      `Are you sure you want to remove ${selectedExerciseIds.length} exercise(s) from today?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            for (const id of selectedExerciseIds) {
-              await removeExerciseFromSession(db, session.id, id);
-            }
-            setSelectedExerciseIds([]);
-            setIsReorderMode(false);
-            await loadData();
-            onShowToast('info', 'Selected exercises removed');
-          },
-        },
-      ]
-    );
+    const n = selectedExerciseIds.length;
+    confirmAction({
+      title: `Remove ${n} ${n === 1 ? 'exercise' : 'exercises'}?`,
+      message: 'All their sets for this day are deleted.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    }).then(async (ok) => {
+      if (!ok) return;
+      for (const id of selectedExerciseIds) {
+        await removeExerciseFromSession(db, session.id, id);
+      }
+      setSelectedExerciseIds([]);
+      setIsReorderMode(false);
+      await loadData();
+      onShowToast('info', `${n} ${n === 1 ? 'exercise' : 'exercises'} removed`);
+    });
   };
 
   // Select all or none
@@ -237,6 +266,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   // If full-screen exercise logger is open
   if (selectedExerciseForLogging) {
     return (
+      <ScreenTransition key="logger" direction="forward">
       <ExerciseDetailScreen
         db={db}
         exerciseItem={selectedExerciseForLogging}
@@ -247,6 +277,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
         onSwitchExercise={(nextItem) => setSelectedExerciseForLogging(nextItem)}
         onShowToast={onShowToast}
       />
+      </ScreenTransition>
     );
   }
 
@@ -337,6 +368,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
   );
 
   return (
+    <ScreenTransition key="list" direction={openedLogger.current ? 'back' : 'none'}>
     <View {...panResponder.panHandlers} style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Back to Hub Header */}
       {onBackToHub && !isReorderMode && (
@@ -368,7 +400,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
             >
               <Link2
                 size={22}
-                color={selectedExerciseIds.length > 0 ? '#38BDF8' : '#64748B'}
+                color={selectedExerciseIds.length > 0 ? colors.secondary : colors.textMuted}
               />
             </TouchableOpacity>
 
@@ -379,7 +411,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
             >
               <Trash2
                 size={22}
-                color={selectedExerciseIds.length > 0 ? '#EF4444' : '#64748B'}
+                color={selectedExerciseIds.length > 0 ? colors.danger : colors.textMuted}
               />
             </TouchableOpacity>
 
@@ -397,7 +429,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
       ) : null}
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarSpace }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -406,21 +438,21 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
       >
         {/* Session Stats Banner (Rounded Cards) */}
         <View style={styles.metricsRow}>
-          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
-            <Text style={styles.metricLabel}>VOLUME</Text>
+          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={styles.metricLabel}>Volume</Text>
             <Text style={styles.metricValue}>
-              {totalVolumeKg > 0 ? totalVolumeKg.toLocaleString() : '0'}
-              <Text style={styles.metricUnit}> kg</Text>
+              {u.fmtVolume(totalVolumeKg).value}
+              <Text style={styles.metricUnit}> {u.fmtVolume(totalVolumeKg).unit}</Text>
             </Text>
           </View>
 
-          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
-            <Text style={styles.metricLabel}>SETS</Text>
+          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={styles.metricLabel}>Sets</Text>
             <Text style={styles.metricValue}>{totalSets}</Text>
           </View>
 
-          <View style={[styles.metricCard, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}>
-            <Text style={styles.metricLabel}>REPS</Text>
+          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={styles.metricLabel}>Reps</Text>
             <Text style={styles.metricValue}>{totalReps}</Text>
           </View>
         </View>
@@ -428,7 +460,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
         {/* Quick Toolbar (Routines & Copy Actions) */}
         <View style={styles.quickToolsRow}>
           <TouchableOpacity
-            style={[styles.quickToolBtn, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}
+            style={[styles.quickToolBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => setIsRoutinesModalVisible(true)}
             activeOpacity={0.7}
           >
@@ -437,7 +469,7 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.quickToolBtn, { backgroundColor: '#1A1C22', borderColor: '#262930' }]}
+            style={[styles.quickToolBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => setIsCopyModalVisible(true)}
             activeOpacity={0.7}
           >
@@ -468,13 +500,13 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
           ))
         ) : (
           /* Empty State */
-          <Card style={[styles.emptyCard, { backgroundColor: '#18191D', borderColor: '#26282E' }]}>
-            <View style={[styles.emptyIconBg, { backgroundColor: '#38BDF820', borderColor: '#38BDF8' }]}>
+          <Card style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={[styles.emptyIconBg, { backgroundColor: colors.secondaryMuted, borderColor: colors.secondary }]}>
               <Dumbbell size={36} color="#38BDF8" />
             </View>
-            <Text style={styles.emptyTitle}>Workout Log Empty</Text>
+            <Text style={styles.emptyTitle}>No exercises yet</Text>
             <Text style={styles.emptySubtitle}>
-              Swipe left/right to browse dates, load a routine, or tap below to add exercises.
+              Add your first exercise, load a routine, or swipe left/right to see other days.
             </Text>
 
             <Button
@@ -501,19 +533,26 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
             <TouchableOpacity
               style={[
                 styles.notesToggleBtn,
-                { backgroundColor: '#1A1C22', borderColor: '#262930' },
+                { backgroundColor: colors.surface, borderColor: colors.border },
               ]}
               onPress={() => setShowNotesInput(!showNotesInput)}
               activeOpacity={0.7}
             >
-              <FileText size={18} color={showNotesInput ? colors.primary : '#94A3B8'} />
+              <FileText size={18} color={showNotesInput ? colors.primary: colors.textSecondary} />
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Sleep & energy check-in (feeds Progress → Sleep and energy) */}
+        {exerciseItems.some((item) => item.logs.length > 0) && (
+          <View style={styles.checkInWrap}>
+            <CheckInCard db={db} date={selectedDate} />
           </View>
         )}
 
         {/* Workout Session Notes Card */}
         {showNotesInput && (
-          <View style={[styles.notesCard, { backgroundColor: '#18191D', borderColor: '#26282E' }]}>
+          <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={styles.notesTitle}>Workout Session Notes</Text>
             <TextInput
               style={styles.notesInput}
@@ -580,10 +619,15 @@ export const WorkoutScreen: React.FC<WorkoutScreenProps> = ({
         />
       )}
     </View>
+    </ScreenTransition>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+  checkInWrap: {
+    marginTop: 12,
+  },
   container: {
     flex: 1,
   },
@@ -594,7 +638,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1F2937',
+    borderBottomColor: colors.border,
   },
   backHubBtn: {
     paddingVertical: 4,
@@ -605,7 +649,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   datePillHeader: {
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.surfaceCard,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -613,18 +657,18 @@ const styles = StyleSheet.create({
   datePillText: {
     ...typography.caption,
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontWeight: '700',
   },
   reorderActionBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.surfaceCard,
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#38BDF8',
+    borderBottomColor: colors.secondary,
   },
   actionBtnLeft: {
     flexDirection: 'row',
@@ -634,7 +678,7 @@ const styles = StyleSheet.create({
   selectedCountText: {
     ...typography.titleSmall,
     fontSize: 15,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   actionBtnsRight: {
@@ -667,20 +711,20 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
+    color: colors.textSecondary,
+    letterSpacing: 0.1,
   },
   metricValue: {
     ...typography.mono,
     fontSize: 17,
     marginTop: 2,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '800',
   },
   metricUnit: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   quickToolsRow: {
     flexDirection: 'row',
@@ -701,7 +745,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 12,
     fontWeight: '700',
-    color: '#E2E8F0',
+    color: colors.text,
   },
   emptyCard: {
     alignItems: 'center',
@@ -723,14 +767,14 @@ const styles = StyleSheet.create({
   emptyTitle: {
     ...typography.titleMedium,
     fontSize: 20,
-    color: '#FFFFFF',
+    color: colors.text,
     marginBottom: 6,
   },
   emptySubtitle: {
     ...typography.bodySecondary,
     textAlign: 'center',
     lineHeight: 20,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginBottom: spacing.xl,
   },
   emptyBtn: {
@@ -754,7 +798,7 @@ const styles = StyleSheet.create({
     ...typography.titleSmall,
     fontSize: 15,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
   },
   notesToggleBtn: {
     width: 48,
@@ -773,18 +817,18 @@ const styles = StyleSheet.create({
   notesTitle: {
     ...typography.titleSmall,
     fontSize: 13,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginBottom: 6,
   },
   notesInput: {
     ...typography.bodySecondary,
-    backgroundColor: '#1E2025',
-    color: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
+    color: colors.text,
     borderRadius: 12,
     padding: spacing.md,
     minHeight: 70,
     borderWidth: 1,
-    borderColor: '#333742',
+    borderColor: colors.borderLight,
     textAlignVertical: 'top',
   },
 });

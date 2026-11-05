@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import { Dumbbell, Flame, Plus, Minus, Check } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { Modal } from '../common/Modal';
 import { Card } from '../common/Card';
 
+import { useUnits } from '../../utils/units';
 interface PlateCalculatorModalProps {
   visible: boolean;
   initialWeight?: number;
@@ -24,6 +24,15 @@ interface PlateConfig {
   color: string;
   label: string;
 }
+
+const PLATES_LB: PlateConfig[] = [
+  { weight: 45, color: '#3B82F6', label: '45lb' },
+  { weight: 35, color: '#EAB308', label: '35lb' },
+  { weight: 25, color: '#22C55E', label: '25lb' },
+  { weight: 10, color: '#FFFFFF', label: '10lb' },
+  { weight: 5, color: '#EF4444', label: '5lb' },
+  { weight: 2.5, color: '#94A3B8', label: '2.5lb' },
+];
 
 const AVAILABLE_PLATES: PlateConfig[] = [
   { weight: 25, color: '#EF4444', label: '25kg' },
@@ -42,9 +51,16 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
   onClose,
 }) => {
   const { colors } = useTheme();
+  // Works in the chosen unit with that unit's real plates and bars.
+  const u = useUnits();
+  const lb = u.unit === 'lb';
+  const PLATES = lb ? PLATES_LB : AVAILABLE_PLATES;
+  const BARS = lb ? [45, 35] : [20, 15];
+  const round = lb ? 5 : 2.5;
+  const snap = (v: number) => Math.round(v / round) * round;
 
-  const [targetWeight, setTargetWeight] = useState<number>(initialWeight > 0 ? initialWeight : 60);
-  const [barWeight, setBarWeight] = useState<number>(20); // 20kg standard Olympic bar
+  const [targetWeight, setTargetWeight] = useState<number>(snap(u.toDisplay(initialWeight > 0 ? initialWeight : 60)));
+  const [barWeight, setBarWeight] = useState<number>(BARS[0]);
 
   const calculatePlatesPerSide = () => {
     let remainingWeight = (targetWeight - barWeight) / 2;
@@ -52,7 +68,7 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
 
     const plates: { plate: PlateConfig; count: number }[] = [];
 
-    for (const p of AVAILABLE_PLATES) {
+    for (const p of PLATES) {
       if (remainingWeight >= p.weight) {
         const count = Math.floor(remainingWeight / p.weight);
         plates.push({ plate: p, count });
@@ -73,19 +89,19 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
     {
       label: 'Warmup 2',
       percent: '50%',
-      weight: Math.max(barWeight, Math.round((targetWeight * 0.5) / 2.5) * 2.5),
+      weight: Math.max(barWeight, snap(targetWeight * 0.5)),
       reps: '5 reps',
     },
     {
       label: 'Warmup 3',
       percent: '70%',
-      weight: Math.max(barWeight, Math.round((targetWeight * 0.7) / 2.5) * 2.5),
+      weight: Math.max(barWeight, snap(targetWeight * 0.7)),
       reps: '3 reps',
     },
     {
       label: 'Warmup 4',
       percent: '90%',
-      weight: Math.max(barWeight, Math.round((targetWeight * 0.9) / 2.5) * 2.5),
+      weight: Math.max(barWeight, snap(targetWeight * 0.9)),
       reps: '1 rep',
     },
   ];
@@ -110,12 +126,12 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
                 if (!isNaN(num)) setTargetWeight(num);
               }}
             />
-            <Text style={[styles.kgUnit, { color: colors.textSecondary }]}>kg Total</Text>
+            <Text style={[styles.kgUnit, { color: colors.textSecondary }]}>{u.label} total</Text>
           </View>
 
           {/* Stepper buttons */}
           <View style={styles.steppersRow}>
-            {[-10, -5, -2.5, 2.5, 5, 10].map((delta) => (
+            {(lb ? [-20, -10, -5, 5, 10, 20] : [-10, -5, -2.5, 2.5, 5, 10]).map((delta) => (
               <TouchableOpacity
                 key={delta}
                 style={[
@@ -135,7 +151,7 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
           {/* Barbell Selector */}
           <View style={styles.barSelectorRow}>
             <Text style={[styles.barLabel, { color: colors.textMuted }]}>Bar Weight:</Text>
-            {[20, 15].map((b) => (
+            {BARS.map((b) => (
               <TouchableOpacity
                 key={b}
                 style={[
@@ -146,7 +162,7 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
                 onPress={() => setBarWeight(b)}
               >
                 <Text style={[styles.barChipText, { color: barWeight === b ? colors.primary : colors.textSecondary }]}>
-                  {b} kg Olympic Bar
+                  {b} {u.label} bar
                 </Text>
               </TouchableOpacity>
             ))}
@@ -238,7 +254,7 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
                   <Text style={[styles.warmupLabel, { color: colors.textSecondary }]}>{w.label}</Text>
                   <Text style={[styles.warmupPct, { color: colors.textMuted }]}>({w.percent})</Text>
                 </View>
-                <Text style={[styles.warmupWeight, { color: colors.primary }]}>{w.weight} kg</Text>
+                <Text style={[styles.warmupWeight, { color: colors.primary }]}>{w.weight} {u.label}</Text>
                 <Text style={[styles.warmupReps, { color: colors.text }]}>{w.reps}</Text>
               </View>
             ))}
@@ -252,7 +268,7 @@ export const PlateCalculatorModal: React.FC<PlateCalculatorModalProps> = ({
                 <Text style={[styles.warmupPct, { color: colors.primary }]}> (100%)</Text>
               </View>
               <Text style={[styles.warmupWeight, { color: colors.primary, fontWeight: '800' }]}>
-                {targetWeight} kg
+                {targetWeight} {u.label}
               </Text>
               <Text style={[styles.warmupReps, { color: colors.primary, fontWeight: '800' }]}>
                 Target Reps

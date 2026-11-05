@@ -1,9 +1,15 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View,
+  StyleSheet,
+} from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text } from '../common/Typography';
 import { MessageSquare, Award, ArrowUp, ArrowDown, Check } from 'lucide-react-native';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { ExerciseWithLogs } from '../../types/database';
 
+import { useUnits } from '../../utils/units';
 interface ExerciseCardProps {
   item: ExerciseWithLogs;
   onOpenLogger: (item: ExerciseWithLogs) => void;
@@ -30,6 +36,7 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
   canMoveDown = false,
 }) => {
   const { colors } = useTheme();
+  const u = useUnits();
   const { exercise, logs, supersetId, supersetColor } = item;
 
   const isSuperset = !!supersetId;
@@ -123,7 +130,7 @@ export const ExerciseCard: React.FC<ExerciseCardProps> = ({
                   {/* Weight Column */}
                   <Text style={styles.weightCol}>
                     {isWeightReps
-                      ? `${(Math.round(log.weight_kg * 10) / 10).toFixed(1)} kgs`
+                      ? `${u.toDisplay(log.weight_kg).toFixed(1)} ${u.label}`
                       : isDistanceTime
                       ? `${log.distance_val} km`
                       : log.time_duration}

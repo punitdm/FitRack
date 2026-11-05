@@ -37,6 +37,9 @@ import {
   HubSummary,
 } from '../types/database';
 import { PRESEEDED_EXERCISES, PRESEEDED_ROUTINES, PRESEEDED_FOODS } from './seedData';
+import { ensureNutritionTables, getNutritionGoals } from './nutrition';
+import { ensureCheckInTable } from './checkins';
+import { ensureMeasurementColumns } from './measurements';
 import { normalizeDateString, getTodayISO, formatShortDate } from '../utils/dateUtils';
 
 export const DB_NAME = 'fitrack.db';
@@ -53,8 +56,18 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
 /**
  * Initializes database tables, creates performance indexes, and seeds standard exercises, routines, and foods.
  */
+/**
+ * Bump this whenever initDatabase changes (new table/column/index, or new
+ * built-in exercises, routines or foods). Launches on an up-to-date database
+ * then skip all setup work, which keeps app start fast.
+ */
+export const DB_SCHEMA_VERSION = 13;
+
 export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON;');
+
+  const current = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  if ((current?.user_version ?? 0) >= DB_SCHEMA_VERSION) return;
 
   // 1. exercises
   await db.execAsync(`
@@ -206,6 +219,15 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
     );
   `);
 
+  // 11. food_entries (meal-based food log; macro_logs stays the synced day total)
+  await ensureNutritionTables(db);
+
+  // 12. session_checkins (sleep / energy per workout day)
+  await ensureCheckInTable(db);
+
+  // 13. extra body measurement columns (neck, shoulders, forearm, calf)
+  await ensureMeasurementColumns(db);
+
   // Indexes
   await db.execAsync(`
     CREATE INDEX IF NOT EXISTS idx_sessions_date ON workout_sessions(date);
@@ -262,6 +284,8 @@ export async function initDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
       [f.name, f.serving_size_g, f.calories, f.protein, f.carbs, f.fat]
     );
   }
+
+  await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION}`);
 }
 
 // ---------------- EXERCISES ----------------
@@ -554,6 +578,34 @@ export async function deleteExerciseSet(db: SQLite.SQLiteDatabase, logId: number
   `,
     [logToDelete.session_id, logToDelete.exercise_id, logToDelete.set_number]
   );
+}
+
+/** Puts a deleted set back exactly where it was (used by Undo). */
+export async function restoreExerciseSet(db: SQLite.SQLiteDatabase, log: ExerciseLog): Promise<void> {
+  await db.withExclusiveTransactionAsync(async (tx) => {
+    await tx.runAsync(
+      'UPDATE exercise_logs SET set_number = set_number + 1 WHERE session_id = ? AND exercise_id = ? AND set_number >= ?',
+      [log.session_id, log.exercise_id, log.set_number]
+    );
+    await tx.runAsync(
+      `INSERT INTO exercise_logs
+         (session_id, exercise_id, set_number, weight_kg, reps, distance_val, distance_unit, time_duration, difficulty, comment, superset_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.session_id,
+        log.exercise_id,
+        log.set_number,
+        log.weight_kg ?? 0,
+        log.reps ?? 0,
+        log.distance_val ?? 0,
+        log.distance_unit ?? 'km',
+        log.time_duration ?? '00:00:00',
+        log.difficulty ?? null,
+        log.comment ?? null,
+        log.superset_id ?? null,
+      ]
+    );
+  });
 }
 
 export async function removeExerciseFromSession(
@@ -1788,6 +1840,8 @@ export async function clearAllUserData(db: SQLite.SQLiteDatabase): Promise<void>
     DELETE FROM exercise_logs;
     DELETE FROM workout_sessions;
     DELETE FROM macro_logs;
+    DELETE FROM food_entries;
+    DELETE FROM session_checkins;
     DELETE FROM hydration_logs;
     DELETE FROM body_stats;
     DELETE FROM running_logs;
@@ -1796,6 +1850,14 @@ export async function clearAllUserData(db: SQLite.SQLiteDatabase): Promise<void>
 }
 
 // ---------------- RUNNING & CARDIO ----------------
+
+/** "HH:MM:SS" / "MM:SS" → seconds (0 for blank or malformed). */
+function clockToSeconds(v: string | null | undefined): number {
+  if (!v) return 0;
+  const parts = v.split(':').map((p) => parseInt(p, 10));
+  if (parts.some((p) => Number.isNaN(p))) return 0;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
 
 export async function getRunningLogsForDate(
   db: SQLite.SQLiteDatabase,
@@ -1811,10 +1873,10 @@ export async function getRunningLogsForDate(
       id: number;
       date: string;
       distance_val: number;
-      time_seconds: number;
+      time_duration: string | null;
       exercise_name: string;
     }>(
-      `SELECT el.id, ws.date, el.distance_val, el.time_seconds, e.name as exercise_name
+      `SELECT el.id, ws.date, el.distance_val, el.time_duration, e.name as exercise_name
        FROM exercise_logs el
        JOIN workout_sessions ws ON el.session_id = ws.id
        JOIN exercises e ON el.exercise_id = e.id
@@ -1824,10 +1886,10 @@ export async function getRunningLogsForDate(
     );
 
     const convertedWorkoutRuns: RunningLog[] = workoutRuns
-      .filter((w) => w.distance_val > 0 || w.time_seconds > 0)
+      .filter((w) => w.distance_val > 0 || clockToSeconds(w.time_duration) > 0)
       .map((w) => {
         const dist = w.distance_val > 0 ? w.distance_val : 1.0;
-        const dur = w.time_seconds > 0 ? w.time_seconds : 0;
+        const dur = clockToSeconds(w.time_duration);
         const pace = dist > 0 && dur > 0 ? Math.round(dur / dist) : 0;
         return {
           id: -w.id,
@@ -1862,10 +1924,10 @@ export async function getAllRunningLogs(
       id: number;
       date: string;
       distance_val: number;
-      time_seconds: number;
+      time_duration: string | null;
       exercise_name: string;
     }>(
-      `SELECT el.id, ws.date, el.distance_val, el.time_seconds, e.name as exercise_name
+      `SELECT el.id, ws.date, el.distance_val, el.time_duration, e.name as exercise_name
        FROM exercise_logs el
        JOIN workout_sessions ws ON el.session_id = ws.id
        JOIN exercises e ON el.exercise_id = e.id
@@ -1875,10 +1937,10 @@ export async function getAllRunningLogs(
     );
 
     const convertedWorkoutRuns: RunningLog[] = workoutRuns
-      .filter((w) => w.distance_val > 0 || w.time_seconds > 0)
+      .filter((w) => w.distance_val > 0 || clockToSeconds(w.time_duration) > 0)
       .map((w) => {
         const dist = w.distance_val > 0 ? w.distance_val : 1.0;
-        const dur = w.time_seconds > 0 ? w.time_seconds : 0;
+        const dur = clockToSeconds(w.time_duration);
         const pace = dist > 0 && dur > 0 ? Math.round(dur / dist) : 0;
         return {
           id: -w.id,
@@ -1956,6 +2018,7 @@ export async function getTodayHubSummary(
     }
 
     // 2. Nutrition metrics
+    const goals = await getNutritionGoals(db);
     const macros = await db.getFirstAsync<MacroLog>(
       'SELECT * FROM macro_logs WHERE date = ?',
       [date]
@@ -2006,15 +2069,15 @@ export async function getTodayHubSummary(
       },
       nutrition: {
         caloriesConsumed: macros?.total_calories || 0,
-        calorieTarget: 2400,
+        calorieTarget: goals.calories,
         proteinConsumed: Math.round(macros?.total_protein || 0),
-        proteinTarget: 180,
+        proteinTarget: goals.protein,
         carbsConsumed: Math.round(macros?.total_carbs || 0),
-        carbsTarget: 250,
+        carbsTarget: goals.carbs,
         fatConsumed: Math.round(macros?.total_fat || 0),
-        fatTarget: 75,
+        fatTarget: goals.fat,
         waterMl: hydration?.amount_ml || 0,
-        waterTargetMl: hydration?.target_ml || 3000,
+        waterTargetMl: hydration?.target_ml || goals.waterMl,
       },
       running: {
         todayDistanceKm: Math.round(todayDistanceKm * 100) / 100,

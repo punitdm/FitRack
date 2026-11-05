@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
-  TextInput,
   Modal,
   Alert,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text, TextInput } from '../components/common/Typography';
 import {
   ArrowLeft,
   Plus,
@@ -35,6 +34,10 @@ import {
 import { formatDisplayDate, shiftDate } from '../utils/dateUtils';
 import { Card } from '../components/common/Card';
 
+import { PopIn } from '../components/common/Motion';
+import { SwipeToDelete } from '../components/common/SwipeToDelete';
+import { notify, notifyUndo } from '../utils/feedback';
+import { haptics } from '../utils/haptics';
 interface RunningScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
@@ -108,7 +111,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
     const totalSecs = mins * 60 + secs;
 
     if (dist <= 0 || totalSecs <= 0) {
-      Alert.alert('Invalid Input', 'Please enter a valid distance and duration.');
+      notify('error', 'Enter a distance and a duration first');
       return;
     }
 
@@ -145,30 +148,34 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
     setManualMinutes('25');
     setManualTitle('Outdoor Running');
     loadData();
-    onShowToast('success', `Logged ${dist.toFixed(2)} km run! 🏃‍♂️`);
+    onShowToast('success', `Logged a ${dist.toFixed(2)} km run`);
   };
 
   const handleDeleteRun = async (id: number) => {
     if (id < 0) {
-      Alert.alert(
-        'Workout Exercise',
-        'This running set was logged in your Workout session. You can manage or delete it from the Workout screen.'
-      );
+      notify('info', 'This run was logged in Workout. Edit or delete it there.');
       return;
     }
-
-    Alert.alert('Delete Run', 'Are you sure you want to remove this running log?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteRunningLog(db, id);
-          loadData();
-          onShowToast('info', 'Run log removed');
-        },
-      },
-    ]);
+    // Delete straight away; Undo restores it.
+    const run = allLogs.find((r) => r.id === id);
+    haptics.tap();
+    await deleteRunningLog(db, id);
+    loadData();
+    if (run) {
+      notifyUndo('Run deleted', async () => {
+        await saveRunningLog(
+          db,
+          run.date,
+          run.distance_km,
+          run.duration_seconds,
+          run.pace_seconds_per_km ?? 0,
+          run.splits_json ?? undefined,
+          run.calories_burned ?? 0,
+          run.notes ?? undefined
+        );
+        loadData();
+      });
+    }
   };
 
   return (
@@ -203,7 +210,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
         </View>
 
         <TouchableOpacity
-          style={[styles.manualAddBtn, { backgroundColor: isDark ? '#38BDF820' : '#E0F2FE', borderColor: '#38BDF8' }]}
+          style={[styles.manualAddBtn, { backgroundColor: colors.pillars.running.soft, borderColor: '#38BDF8' }]}
           onPress={() => setIsManualModalOpen(true)}
           activeOpacity={0.7}
         >
@@ -217,33 +224,33 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
           style={[
             styles.heroCard,
             {
-              backgroundColor: isDark ? '#0E1720' : '#F0F9FF',
-              borderColor: isDark ? '#38BDF8' : '#7DD3FC',
+              backgroundColor: colors.pillars.running.tint,
+              borderColor: colors.border,
             },
           ]}
         >
           <View style={styles.heroTopRow}>
             <View>
-              <Text style={[styles.heroSubHeader, { color: colors.textMuted }]}>TOTAL DISTANCE RUN</Text>
-              <Text style={[styles.heroDistanceBig, { color: isDark ? '#38BDF8' : '#0284C7' }]}>
+              <Text style={[styles.heroSubHeader, { color: colors.textMuted }]}>Total distance run</Text>
+              <Text style={[styles.heroDistanceBig, { color: colors.pillars.running.accent }]}>
                 {totalDistanceKm.toFixed(1)}
                 <Text style={[styles.heroKmUnit, { color: colors.textMuted }]}> km</Text>
               </Text>
             </View>
 
-            <View style={[styles.runsBadge, { backgroundColor: isDark ? '#19283B' : '#E0F2FE' }]}>
-              <Award size={18} color={isDark ? '#38BDF8' : '#0284C7'} />
-              <Text style={[styles.runsBadgeText, { color: isDark ? '#38BDF8' : '#0284C7' }]}>
+            <View style={[styles.runsBadge, { backgroundColor: colors.pillars.running.soft }]}>
+              <Award size={18} color={colors.pillars.running.accent} />
+              <Text style={[styles.runsBadgeText, { color: colors.pillars.running.accent }]}>
                 {totalRunsCount} Sessions
               </Text>
             </View>
           </View>
 
           {/* Quick Metrics Bar */}
-          <View style={[styles.metricsRow, { backgroundColor: isDark ? '#131D28' : '#FFFFFF', borderColor: colors.border }]}>
+          <View style={[styles.metricsRow, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
             <View style={styles.metricItem}>
               <Text style={[styles.metricVal, { color: colors.text }]}>{avgPaceFormatted}</Text>
-              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>AVG PACE /KM</Text>
+              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>Avg pace /km</Text>
             </View>
 
             <View style={[styles.metricDivider, { backgroundColor: colors.border }]} />
@@ -252,7 +259,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
               <Text style={[styles.metricVal, { color: colors.text }]}>
                 {Math.floor(totalSeconds / 3600)}h {Math.floor((totalSeconds % 3600) / 60)}m
               </Text>
-              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>TOTAL TIME</Text>
+              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>Total time</Text>
             </View>
 
             <View style={[styles.metricDivider, { backgroundColor: colors.border }]} />
@@ -261,7 +268,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
               <Text style={[styles.metricVal, { color: colors.text }]}>
                 {Math.round(totalDistanceKm * 65)}
               </Text>
-              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>CALORIES</Text>
+              <Text style={[styles.metricLbl, { color: colors.textMuted }]}>Calories</Text>
             </View>
           </View>
         </View>
@@ -269,7 +276,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
         {/* ================= 3. ALL RUNNING SESSIONS (HISTORY & STATS) ================= */}
         <View style={styles.historySection}>
           <View style={styles.historyHeaderRow}>
-            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>ALL RUNNING SESSIONS</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>All running sessions</Text>
             <TouchableOpacity onPress={() => setIsManualModalOpen(true)}>
               <Text style={styles.manualEntryLink}>+ Log Run</Text>
             </TouchableOpacity>
@@ -294,12 +301,13 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                 }
 
                 return (
+                  <SwipeToDelete key={log.id} enabled={log.id > 0} onDelete={() => handleDeleteRun(log.id)}>
                   <View
                     key={log.id}
                     style={[
                       styles.runCard,
                       {
-                        backgroundColor: isDark ? '#101622' : '#FFFFFF',
+                        backgroundColor: colors.surfaceCard,
                         borderColor: colors.border,
                       },
                     ]}
@@ -329,34 +337,34 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                     <View
                       style={[
                         styles.runCardMetrics,
-                        { backgroundColor: isDark ? '#090D16' : '#F8FAFC' },
+                        { backgroundColor: colors.background },
                       ]}
                     >
                       <View style={styles.runMetricBox}>
                         <Text
                           style={[
                             styles.runDistanceBig,
-                            { color: isDark ? '#38BDF8' : '#0284C7' },
+                            { color: colors.pillars.running.accent },
                           ]}
                         >
                           {log.distance_km.toFixed(2)}
                           <Text style={{ fontSize: 13, color: colors.textMuted }}> km</Text>
                         </Text>
-                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>DISTANCE</Text>
+                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>Distance</Text>
                       </View>
 
                       <View style={styles.runMetricBox}>
                         <Text style={[styles.runMetricVal, { color: colors.text }]}>
                           {mins}m {secs < 10 ? '0' : ''}{secs}s
                         </Text>
-                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>TIME</Text>
+                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>Time</Text>
                       </View>
 
                       <View style={styles.runMetricBox}>
                         <Text style={[styles.runMetricVal, { color: colors.text }]}>
                           {pMin}'{pSec < 10 ? '0' : ''}{pSec}"
                         </Text>
-                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>PACE /KM</Text>
+                        <Text style={[styles.runMetricLabel, { color: colors.textMuted }]}>Pace /km</Text>
                       </View>
                     </View>
 
@@ -367,13 +375,13 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                         onPress={() => setExpandedRunId(isExpanded ? null : log.id)}
                         activeOpacity={0.7}
                       >
-                        <Text style={[styles.splitsToggleText, { color: isDark ? '#38BDF8' : '#0284C7' }]}>
+                        <Text style={[styles.splitsToggleText, { color: colors.pillars.running.accent }]}>
                           {isExpanded ? 'Hide KM Splits' : `View ${splits.length} KM Splits`}
                         </Text>
                         {isExpanded ? (
-                          <ChevronUp size={15} color={isDark ? '#38BDF8' : '#0284C7'} />
+                          <ChevronUp size={15} color={colors.pillars.running.accent} />
                         ) : (
-                          <ChevronDown size={15} color={isDark ? '#38BDF8' : '#0284C7'} />
+                          <ChevronDown size={15} color={colors.pillars.running.accent} />
                         )}
                       </TouchableOpacity>
                     )}
@@ -383,7 +391,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                       <View
                         style={[
                           styles.splitsTable,
-                          { backgroundColor: isDark ? '#090D16' : '#F8FAFC' },
+                          { backgroundColor: colors.background },
                         ]}
                       >
                         {splits.map((s) => (
@@ -400,7 +408,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                             <Text
                               style={[
                                 styles.splitTablePace,
-                                { color: isDark ? '#38BDF8' : '#0284C7' },
+                                { color: colors.pillars.running.accent },
                               ]}
                             >
                               {s.paceFormatted}
@@ -410,12 +418,13 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                       </View>
                     )}
                   </View>
+                  </SwipeToDelete>
                 );
               })}
             </View>
           ) : (
             <Card style={[styles.emptyCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-              <Footprints size={40} color={isDark ? '#38BDF8' : '#0284C7'} />
+              <Footprints size={40} color={colors.pillars.running.accent} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No Running Sessions Recorded</Text>
               <Text style={[styles.emptySubTitle, { color: colors.textMuted }]}>
                 Log running exercises in your Workout tab or use '+ Log Run' above.
@@ -433,24 +442,24 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
         onRequestClose={() => setIsManualModalOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View
+          <PopIn
             style={[
               styles.modalContent,
               {
-                backgroundColor: isDark ? '#131D28' : '#FFFFFF',
-                borderColor: isDark ? '#38BDF8' : '#7DD3FC',
+                backgroundColor: colors.surfaceCard,
+                borderColor: colors.border,
               },
             ]}
           >
             <Text style={[styles.modalTitle, { color: colors.text }]}>Log Running Session</Text>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>EXERCISE / TYPE</Text>
+              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Exercise / type</Text>
               <TextInput
                 style={[
                   styles.modalInput,
                   {
-                    backgroundColor: isDark ? '#0E1720' : '#F8FAFC',
+                    backgroundColor: colors.background,
                     borderColor: colors.border,
                     color: colors.text,
                   },
@@ -463,12 +472,12 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>DISTANCE (KM)</Text>
+              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Distance (km)</Text>
               <TextInput
                 style={[
                   styles.modalInput,
                   {
-                    backgroundColor: isDark ? '#0E1720' : '#F8FAFC',
+                    backgroundColor: colors.background,
                     borderColor: colors.border,
                     color: colors.text,
                   },
@@ -482,7 +491,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
             </View>
 
             <View style={styles.modalField}>
-              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>DURATION (MINUTES : SECONDS)</Text>
+              <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Duration (minutes : seconds)</Text>
               <View style={styles.durationInputRow}>
                 <TextInput
                   style={[
@@ -490,7 +499,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                     {
                       flex: 1,
                       textAlign: 'center',
-                      backgroundColor: isDark ? '#0E1720' : '#F8FAFC',
+                      backgroundColor: colors.background,
                       borderColor: colors.border,
                       color: colors.text,
                     },
@@ -508,7 +517,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                     {
                       flex: 1,
                       textAlign: 'center',
-                      backgroundColor: isDark ? '#0E1720' : '#F8FAFC',
+                      backgroundColor: colors.background,
                       borderColor: colors.border,
                       color: colors.text,
                     },
@@ -526,7 +535,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
               <TouchableOpacity
                 style={[
                   styles.modalCancelBtn,
-                  { backgroundColor: isDark ? '#1E293B' : '#F1F5F9' },
+                  { backgroundColor: colors.surfaceHighlight },
                 ]}
                 onPress={() => setIsManualModalOpen(false)}
               >
@@ -540,7 +549,7 @@ export const RunningScreen: React.FC<RunningScreenProps> = ({
                 <Text style={styles.modalSaveText}>Save Run</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </PopIn>
         </View>
       </Modal>
     </View>
@@ -611,7 +620,7 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   heroTopRow: {
     flexDirection: 'row',
@@ -622,7 +631,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
   },
   heroDistanceBig: {
     ...typography.mono,
@@ -688,7 +697,7 @@ const styles = StyleSheet.create({
     ...typography.titleSmall,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
   },
   manualEntryLink: {
     ...typography.caption,
@@ -807,7 +816,7 @@ const styles = StyleSheet.create({
   modalContent: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
     gap: 14,
   },
   modalTitle: {
@@ -822,7 +831,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
   },
   modalInput: {
     borderRadius: 12,

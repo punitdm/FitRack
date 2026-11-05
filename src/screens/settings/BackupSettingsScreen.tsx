@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
+import { TouchableOpacity } from '../../components/common/Touchable';
+import { Text } from '../../components/common/Typography';
 import {
   ArrowLeft,
   Download,
@@ -137,8 +144,8 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
           style={[
             styles.heroJsonCard,
             {
-              backgroundColor: isDark ? '#111827' : '#F0F9FF',
-              borderColor: isDark ? '#38BDF8' : '#7DD3FC',
+              backgroundColor: colors.pillars.running.tint,
+              borderColor: colors.border,
             },
           ]}
         >
@@ -146,9 +153,9 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
             <View style={styles.badgeRow}>
               <View style={[styles.formatBadge, { backgroundColor: '#38BDF820', borderColor: '#38BDF8' }]}>
                 <FileCode size={13} color="#38BDF8" />
-                <Text style={[styles.formatBadgeText, { color: '#38BDF8' }]}>UNIVERSAL JSON BACKUP</Text>
+                <Text style={[styles.formatBadgeText, { color: '#38BDF8' }]}>Universal JSON backup</Text>
               </View>
-              <Text style={[styles.recommendedTag, { color: '#22C55E' }]}>✦ WebApp & Cloud Ready</Text>
+              <Text style={[styles.recommendedTag, { color: '#22C55E' }]}>Recommended</Text>
             </View>
           </View>
 
@@ -181,7 +188,7 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
             <TouchableOpacity
               style={[
                 styles.secondaryActionBtn,
-                { backgroundColor: isDark ? '#1E293B' : '#FFFFFF', borderColor: colors.border },
+                { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
               ]}
               onPress={handleImportFile}
               disabled={isImporting}
@@ -215,7 +222,7 @@ export const BackupSettingsScreen: React.FC<BackupSettingsScreenProps> = ({
         {/* ================= 3. OPTIONAL SPREADSHEET CSV EXPORT ================= */}
         <View style={styles.csvSection}>
           <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>
-            SPREADSHEET EXPORT (EXCEL / GOOGLE SHEETS)
+            Spreadsheet export (Excel / Google Sheets)
           </Text>
 
           <Card style={[styles.csvOptionsCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
@@ -319,7 +326,7 @@ const styles = StyleSheet.create({
   heroJsonCard: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
     gap: 10,
   },
   heroTopHeader: {
@@ -344,7 +351,7 @@ const styles = StyleSheet.create({
   formatBadgeText: {
     fontSize: 10,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
   },
   recommendedTag: {
     ...typography.caption,
@@ -419,7 +426,7 @@ const styles = StyleSheet.create({
     ...typography.titleSmall,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
     paddingLeft: 4,
   },
   csvOptionsCard: {

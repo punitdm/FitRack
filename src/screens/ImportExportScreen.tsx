@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+} from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text } from '../components/common/Typography';
 import {
   Palette,
   HardDrive,
@@ -8,46 +14,86 @@ import {
   Info,
   ChevronRight,
   ShieldCheck,
+  ArrowDownToLine,
 } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
 import { ACCENT_PRESETS } from '../theme/ThemeContext';
 import { Card } from '../components/common/Card';
+import { ScalePressable } from '../components/common/Motion';
 import { ThemeSettingsScreen } from './settings/ThemeSettingsScreen';
 import { BackupSettingsScreen } from './settings/BackupSettingsScreen';
+import { ImportAppsScreen } from './settings/ImportAppsScreen';
 import { ExerciseCatalogScreen } from './settings/ExerciseCatalogScreen';
 import { AboutSettingsScreen } from './settings/AboutSettingsScreen';
+import { SettingsHome } from './settings/SettingsHome';
 import { BodyStatsScreen } from './BodyStatsScreen';
 import { getTodayISO } from '../utils/dateUtils';
 
 interface ImportExportScreenProps {
   db: SQLite.SQLiteDatabase;
   onBackToHub?: () => void;
+  /** Text for the back link (defaults to "Back to Hub"). */
+  backLabel?: string;
+  /** When provided (navigator present), sub-pages open as their own screens. */
+  onOpenSubScreen?: (key: SettingsSubScreenKey) => void;
   onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
 }
 
-type SubScreen = 'none' | 'theme' | 'backup' | 'catalog' | 'bodystats' | 'about';
+export type SettingsSubScreenKey = 'theme' | 'backup' | 'importApps' | 'catalog' | 'bodystats' | 'about';
+type SubScreen = 'none' | SettingsSubScreenKey;
+
+/** Renders one settings sub-page. Used as its own navigation screen. */
+export const SettingsSubScreen: React.FC<{
+  screen: SettingsSubScreenKey;
+  db: SQLite.SQLiteDatabase;
+  onBack: () => void;
+  onShowToast: (type: 'success' | 'error' | 'info', text: string) => void;
+}> = ({ screen, db, onBack, onShowToast }) => {
+  const { colors } = useTheme();
+  switch (screen) {
+    case 'theme':
+      return <ThemeSettingsScreen onBack={onBack} onShowToast={onShowToast} />;
+    case 'backup':
+      return <BackupSettingsScreen db={db} onBack={onBack} onShowToast={onShowToast} />;
+    case 'importApps':
+      return <ImportAppsScreen db={db} onBack={onBack} onShowToast={onShowToast} />;
+    case 'catalog':
+      return <ExerciseCatalogScreen db={db} onBack={onBack} onShowToast={onShowToast} />;
+    case 'about':
+      return <AboutSettingsScreen db={db} onBack={onBack} onShowToast={onShowToast} />;
+    case 'bodystats':
+      return (
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <View style={[styles.subScreenHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <TouchableOpacity style={styles.subBackBtn} onPress={onBack} hitSlop={8}>
+              <ChevronRight size={20} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
+              <Text style={[styles.subBackText, { color: colors.text }]}>Settings</Text>
+            </TouchableOpacity>
+            <Text style={[styles.subHeaderTitle, { color: colors.text }]}>Body Stats</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <BodyStatsScreen db={db} selectedDate={getTodayISO()} onShowToast={onShowToast} />
+        </View>
+      );
+  }
+};
 
 export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
   db,
   onBackToHub,
+  backLabel = 'Back to Hub',
+  onOpenSubScreen,
   onShowToast,
 }) => {
   const { colors, isDark, accent } = useTheme();
   const [activeSubScreen, setActiveSubScreen] = useState<SubScreen>('none');
 
-  if (activeSubScreen === 'theme') {
+  // Without a navigator (fallback), sub-pages render in place.
+  if (activeSubScreen !== 'none') {
     return (
-      <ThemeSettingsScreen
-        onBack={() => setActiveSubScreen('none')}
-        onShowToast={onShowToast}
-      />
-    );
-  }
-
-  if (activeSubScreen === 'backup') {
-    return (
-      <BackupSettingsScreen
+      <SettingsSubScreen
+        screen={activeSubScreen}
         db={db}
         onBack={() => setActiveSubScreen('none')}
         onShowToast={onShowToast}
@@ -55,153 +101,10 @@ export const ImportExportScreen: React.FC<ImportExportScreenProps> = ({
     );
   }
 
-  if (activeSubScreen === 'catalog') {
-    return (
-      <ExerciseCatalogScreen
-        db={db}
-        onBack={() => setActiveSubScreen('none')}
-        onShowToast={onShowToast}
-      />
-    );
-  }
+  const openSubScreen = (key: SettingsSubScreenKey) =>
+    onOpenSubScreen ? onOpenSubScreen(key) : setActiveSubScreen(key);
 
-  if (activeSubScreen === 'bodystats') {
-    return (
-      <View style={{ flex: 1 }}>
-        <View style={[styles.subScreenHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={styles.subBackBtn} onPress={() => setActiveSubScreen('none')}>
-            <ChevronRight size={20} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
-            <Text style={[styles.subBackText, { color: colors.text }]}>Settings</Text>
-          </TouchableOpacity>
-          <Text style={[styles.subHeaderTitle, { color: colors.text }]}>Body Stats</Text>
-          <View style={{ width: 60 }} />
-        </View>
-        <BodyStatsScreen
-          db={db}
-          selectedDate={getTodayISO()}
-          onShowToast={onShowToast}
-        />
-      </View>
-    );
-  }
-
-  if (activeSubScreen === 'about') {
-    return (
-      <AboutSettingsScreen
-        db={db}
-        onBack={() => setActiveSubScreen('none')}
-        onShowToast={onShowToast}
-      />
-    );
-  }
-
-  const currentAccentName = ACCENT_PRESETS[accent]?.name || 'Volt Green';
-
-  const menuGroups = [
-    {
-      title: '1. DATA BACKUP & RESTORE (JSON / CSV)',
-      items: [
-        {
-          key: 'backup' as SubScreen,
-          icon: <HardDrive size={20} color={colors.primary} />,
-          title: 'Full JSON Backup & Restore',
-          subtitle: 'Single-file backup for Supabase, WebApp, and Mobile sync',
-        },
-      ],
-    },
-    {
-      title: '2. THEME & APPEARANCE',
-      items: [
-        {
-          key: 'theme' as SubScreen,
-          icon: <Palette size={20} color={colors.secondary} />,
-          title: 'Theme Type & Colors',
-          subtitle: `${isDark ? 'Dark Mode' : 'Light Mode'} • ${currentAccentName} Accent`,
-        },
-      ],
-    },
-    {
-      title: 'TRAINING CATALOG & INFO',
-      items: [
-        {
-          key: 'catalog' as SubScreen,
-          icon: <Dumbbell size={20} color={colors.accent} />,
-          title: 'Exercise Catalog',
-          subtitle: 'Manage muscle categories and custom exercises',
-        },
-        {
-          key: 'about' as SubScreen,
-          icon: <Info size={20} color="#94A3B8" />,
-          title: 'About FitRack',
-          subtitle: '100% Offline SQLite Storage • Version 1.2.0',
-        },
-      ],
-    },
-  ];
-
-  return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Back to Hub Header */}
-      {onBackToHub && (
-        <TouchableOpacity
-          style={styles.backHubHeader}
-          onPress={onBackToHub}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.backHubText, { color: colors.primary }]}>‹ Back to Hub</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Privacy Guarantee Header */}
-      <View style={[styles.privacyBanner, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-        <ShieldCheck size={22} color={colors.primary} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.privacyTitle, { color: colors.text }]}>100% Offline & Private</Text>
-          <Text style={[styles.privacySub, { color: colors.textMuted }]}>
-            All workout logs and nutrition stay stored locally on your device in SQLite.
-          </Text>
-        </View>
-      </View>
-
-      {/* Menu Groups */}
-      {menuGroups.map((group, gIdx) => (
-        <View key={gIdx} style={styles.groupContainer}>
-          <Text style={[styles.groupTitle, { color: colors.textMuted }]}>{group.title}</Text>
-          <Card style={[styles.menuCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
-            {group.items.map((item, iIdx) => {
-              const isLast = iIdx === group.items.length - 1;
-              return (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[
-                    styles.menuRow,
-                    !isLast && [styles.menuRowBorder, { borderBottomColor: colors.border }],
-                  ]}
-                  onPress={() => setActiveSubScreen(item.key)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: colors.surfaceHighlight }]}>
-                      {item.icon}
-                    </View>
-                    <View style={styles.textCol}>
-                      <Text style={[styles.itemTitle, { color: colors.text }]}>{item.title}</Text>
-                      <Text style={[styles.itemSubtitle, { color: colors.textMuted }]}>{item.subtitle}</Text>
-                    </View>
-                  </View>
-                  <ChevronRight size={18} color={colors.textSecondary} />
-                </TouchableOpacity>
-              );
-            })}
-          </Card>
-        </View>
-      ))}
-    </ScrollView>
-  );
+  return <SettingsHome onBack={onBackToHub} onOpen={openSubScreen} />;
 };
 
 const styles = StyleSheet.create({
@@ -247,7 +150,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
     paddingLeft: 4,
   },
   menuCard: {

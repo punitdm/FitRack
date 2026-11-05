@@ -3,31 +3,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { format } from 'date-fns';
 import Papa from 'papaparse';
-import {
-  Exercise,
-  WorkoutSession,
-  ExerciseLog,
-  MacroLog,
-  HydrationLog,
-  BodyStats,
-  RunningLog,
-  CustomFood,
-} from '../types/database';
 import { normalizeDateString } from './dateUtils';
-
-export interface FitRackBackupPayload {
-  version: string;
-  schema_version: number;
-  exported_at: string;
-  workout_sessions: WorkoutSession[];
-  exercise_logs: ExerciseLog[];
-  exercises: Exercise[];
-  macro_logs: MacroLog[];
-  hydration_logs: HydrationLog[];
-  body_stats: BodyStats[];
-  running_logs: RunningLog[];
-  custom_foods: CustomFood[];
-}
+import { buildBackupPayload, looksLikeFitRackBackup, restoreBackupPayload } from './backupCore';
 
 export interface BackupResult {
   success: boolean;
@@ -46,311 +23,80 @@ export interface BackupResult {
 }
 
 /**
- * Exports entire FitRack database to a centralized, Supabase & WebApp compatible JSON file.
+ * Exports the entire FitRack database to one JSON file and opens the share sheet.
  */
 export async function exportFullJsonBackup(db: SQLite.SQLiteDatabase): Promise<BackupResult> {
   try {
-    const [
-      sessions,
-      logs,
-      exercises,
-      macros,
-      hydration,
-      bodyStats,
-      running,
-      foods,
-    ] = await Promise.all([
-      db.getAllAsync<WorkoutSession>('SELECT * FROM workout_sessions ORDER BY date ASC, id ASC'),
-      db.getAllAsync<ExerciseLog>('SELECT * FROM exercise_logs ORDER BY session_id ASC, set_number ASC'),
-      db.getAllAsync<Exercise>('SELECT * FROM exercises ORDER BY id ASC'),
-      db.getAllAsync<MacroLog>('SELECT * FROM macro_logs ORDER BY date ASC'),
-      db.getAllAsync<HydrationLog>('SELECT * FROM hydration_logs ORDER BY date ASC'),
-      db.getAllAsync<BodyStats>('SELECT * FROM body_stats ORDER BY date ASC'),
-      db.getAllAsync<RunningLog>('SELECT * FROM running_logs ORDER BY date ASC'),
-      db.getAllAsync<CustomFood>('SELECT * FROM custom_foods ORDER BY id ASC'),
-    ]);
-
-    const payload: FitRackBackupPayload = {
-      version: '1.2.0',
-      schema_version: 1,
-      exported_at: new Date().toISOString(),
-      workout_sessions: sessions,
-      exercise_logs: logs,
-      exercises: exercises,
-      macro_logs: macros,
-      hydration_logs: hydration,
-      body_stats: bodyStats,
-      running_logs: running,
-      custom_foods: foods,
-    };
-
-    const jsonString = JSON.stringify(payload, null, 2);
+    const payload = await buildBackupPayload(db);
+    const jsonString = JSON.stringify(payload);
     const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-    const filename = `FitRack_Full_Backup_${timestamp}.json`;
-    const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+    const fileUri = `${FileSystem.cacheDirectory}FitRack_Full_Backup_${timestamp}.json`;
 
-    await FileSystem.writeAsStringAsync(fileUri, jsonString, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
+    await FileSystem.writeAsStringAsync(fileUri, jsonString, { encoding: FileSystem.EncodingType.UTF8 });
 
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(fileUri, {
         mimeType: 'application/json',
-        dialogTitle: 'Export FitRack Backup (JSON)',
+        dialogTitle: 'Export FitRack backup',
         UTI: 'public.json',
       });
     }
 
+    const sessions = payload.workout_sessions.length;
     return {
       success: true,
       filePath: fileUri,
       format: 'json',
-      message: `Exported ${sessions.length} workouts, ${macros.length} diet logs & ${running.length} runs! 🚀`,
+      message: `Backup ready: ${sessions} workouts, ${payload.exercise_logs.length} sets, ${payload.macro_logs.length} nutrition days`,
       counts: {
-        sessions: sessions.length,
-        sets: logs.length,
-        exercises: exercises.length,
-        macros: macros.length,
-        running: running.length,
-        bodyStats: bodyStats.length,
-        foods: foods.length,
+        sessions,
+        sets: payload.exercise_logs.length,
+        exercises: payload.exercises.length,
+        macros: payload.macro_logs.length,
+        running: payload.running_logs.length,
+        bodyStats: payload.body_stats.length,
+        foods: payload.custom_foods.length,
       },
     };
   } catch (err: any) {
     console.error('JSON Export Error:', err);
-    return {
-      success: false,
-      message: `Failed to export JSON backup: ${err.message}`,
-    };
+    return { success: false, message: `Couldn't export backup: ${err?.message || err}` };
   }
 }
 
 /**
- * Imports and merges a FitRack JSON backup file into SQLite.
+ * Restores a FitRack JSON backup by merging it into this phone's data, in one
+ * transaction: if anything fails, nothing changes.
  */
-export async function importFullJsonBackup(
-  db: SQLite.SQLiteDatabase,
-  jsonContent: string
-): Promise<BackupResult> {
+export async function importFullJsonBackup(db: SQLite.SQLiteDatabase, jsonContent: string): Promise<BackupResult> {
+  let data: unknown;
   try {
-    const data = JSON.parse(jsonContent);
-
-    if (!data.workout_sessions && !data.macro_logs && !data.exercises && !data.body_stats) {
-      throw new Error('Invalid FitRack JSON structure. Missing database tables.');
-    }
-
-    let sessionsCount = 0;
-    let setsCount = 0;
-    let exercisesCount = 0;
-    let macrosCount = 0;
-    let runningCount = 0;
-    let bodyStatsCount = 0;
-    let foodsCount = 0;
-
-    await db.execAsync('PRAGMA foreign_keys = OFF;');
-
-    // 1. Exercises
-    if (Array.isArray(data.exercises)) {
-      for (const ex of data.exercises) {
-        await db.runAsync(
-          `INSERT INTO exercises (id, name, category, tracking_type, is_custom)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(name) DO UPDATE SET
-             category = excluded.category,
-             tracking_type = excluded.tracking_type`,
-          [ex.id, ex.name, ex.category, ex.tracking_type || 'weight_reps', ex.is_custom || 0]
-        );
-        exercisesCount++;
-      }
-    }
-
-    // 2. Workout Sessions
-    if (Array.isArray(data.workout_sessions)) {
-      for (const ws of data.workout_sessions) {
-        await db.runAsync(
-          `INSERT INTO workout_sessions (id, date, notes)
-           VALUES (?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             date = excluded.date,
-             notes = excluded.notes`,
-          [ws.id, ws.date, ws.notes || null]
-        );
-        sessionsCount++;
-      }
-    }
-
-    // 3. Exercise Logs
-    if (Array.isArray(data.exercise_logs)) {
-      for (const el of data.exercise_logs) {
-        await db.runAsync(
-          `INSERT INTO exercise_logs (id, session_id, exercise_id, set_number, weight_kg, reps, distance_val, distance_unit, time_seconds, is_warmup, is_drop_set, rpe, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             weight_kg = excluded.weight_kg,
-             reps = excluded.reps,
-             distance_val = excluded.distance_val,
-             time_seconds = excluded.time_seconds`,
-          [
-            el.id,
-            el.session_id,
-            el.exercise_id,
-            el.set_number,
-            el.weight_kg || 0,
-            el.reps || 0,
-            el.distance_val || 0,
-            el.distance_unit || 'km',
-            el.time_seconds || 0,
-            el.is_warmup || 0,
-            el.is_drop_set || 0,
-            el.rpe || null,
-            el.notes || null,
-          ]
-        );
-        setsCount++;
-      }
-    }
-
-    // 4. Macro Logs
-    if (Array.isArray(data.macro_logs)) {
-      for (const m of data.macro_logs) {
-        await db.runAsync(
-          `INSERT INTO macro_logs (date, total_calories, total_protein, total_carbs, total_fat, actual_food)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(date) DO UPDATE SET
-             total_calories = excluded.total_calories,
-             total_protein = excluded.total_protein,
-             total_carbs = excluded.total_carbs,
-             total_fat = excluded.total_fat,
-             actual_food = excluded.actual_food`,
-          [
-            m.date,
-            m.total_calories || 0,
-            m.total_protein || 0,
-            m.total_carbs || 0,
-            m.total_fat || 0,
-            m.actual_food || null,
-          ]
-        );
-        macrosCount++;
-      }
-    }
-
-    // 5. Hydration Logs
-    if (Array.isArray(data.hydration_logs)) {
-      for (const h of data.hydration_logs) {
-        await db.runAsync(
-          `INSERT INTO hydration_logs (date, amount_ml, target_ml)
-           VALUES (?, ?, ?)
-           ON CONFLICT(date) DO UPDATE SET
-             amount_ml = excluded.amount_ml,
-             target_ml = excluded.target_ml`,
-          [h.date, h.amount_ml || 0, h.target_ml || 3000]
-        );
-      }
-    }
-
-    // 6. Body Stats
-    if (Array.isArray(data.body_stats)) {
-      for (const b of data.body_stats) {
-        await db.runAsync(
-          `INSERT INTO body_stats (date, weight_kg, body_fat, chest, waist, arm, thigh)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(date) DO UPDATE SET
-             weight_kg = excluded.weight_kg,
-             body_fat = excluded.body_fat,
-             chest = excluded.chest,
-             waist = excluded.waist,
-             arm = excluded.arm,
-             thigh = excluded.thigh`,
-          [
-            b.date,
-            b.weight_kg || null,
-            b.body_fat || null,
-            b.chest || null,
-            b.waist || null,
-            b.arm || null,
-            b.thigh || null,
-          ]
-        );
-        bodyStatsCount++;
-      }
-    }
-
-    // 7. Running Logs
-    if (Array.isArray(data.running_logs)) {
-      for (const r of data.running_logs) {
-        await db.runAsync(
-          `INSERT INTO running_logs (id, date, distance_km, duration_seconds, pace_seconds_per_km, splits_json, calories_burned, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             distance_km = excluded.distance_km,
-             duration_seconds = excluded.duration_seconds,
-             pace_seconds_per_km = excluded.pace_seconds_per_km,
-             splits_json = excluded.splits_json,
-             notes = excluded.notes`,
-          [
-            r.id,
-            r.date,
-            r.distance_km || 0,
-            r.duration_seconds || 0,
-            r.pace_seconds_per_km || 0,
-            r.splits_json || null,
-            r.calories_burned || 0,
-            r.notes || null,
-          ]
-        );
-        runningCount++;
-      }
-    }
-
-    // 8. Custom Foods
-    if (Array.isArray(data.custom_foods)) {
-      for (const f of data.custom_foods) {
-        await db.runAsync(
-          `INSERT INTO custom_foods (id, name, serving_size_g, calories, protein, carbs, fat)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(name) DO UPDATE SET
-             calories = excluded.calories,
-             protein = excluded.protein,
-             carbs = excluded.carbs,
-             fat = excluded.fat`,
-          [
-            f.id,
-            f.name,
-            f.serving_size_g || 100,
-            f.calories || 0,
-            f.protein || 0,
-            f.carbs || 0,
-            f.fat || 0,
-          ]
-        );
-        foodsCount++;
-      }
-    }
-
-    await db.execAsync('PRAGMA foreign_keys = ON;');
-
+    data = JSON.parse(jsonContent);
+  } catch {
+    return { success: false, message: 'This file is not valid JSON. Is it complete?' };
+  }
+  if (!looksLikeFitRackBackup(data)) {
+    return { success: false, message: "This isn't a FitRack backup. For GymMane or FitNotes use Import from other apps." };
+  }
+  try {
+    const c = await restoreBackupPayload(db, data);
+    const parts = [
+      `${c.sets} sets`,
+      c.sessions ? `${c.sessions} new workout days` : '',
+      c.nutritionDays ? `${c.nutritionDays} nutrition days` : '',
+      c.bodyDays ? `${c.bodyDays} body-stat days` : '',
+      c.runs ? `${c.runs} runs` : '',
+    ].filter(Boolean);
+    const skipped = c.setsSkipped ? ` (${c.setsSkipped} sets already here were skipped)` : '';
     return {
       success: true,
       format: 'json',
-      message: `Restored ${sessionsCount} workouts, ${setsCount} sets, ${macrosCount} meals & ${runningCount} runs! 🎉`,
-      counts: {
-        sessions: sessionsCount,
-        sets: setsCount,
-        exercises: exercisesCount,
-        macros: macrosCount,
-        running: runningCount,
-        bodyStats: bodyStatsCount,
-        foods: foodsCount,
-      },
+      message: `Restored ${parts.join(', ')}${skipped}`,
+      counts: { sessions: c.sessions, sets: c.sets, exercises: c.exercises, macros: c.nutritionDays, running: c.runs, bodyStats: c.bodyDays, foods: c.customFoods },
     };
   } catch (err: any) {
-    await db.execAsync('PRAGMA foreign_keys = ON;');
     console.error('JSON Import Error:', err);
-    return {
-      success: false,
-      message: `Failed to restore JSON backup: ${err.message}`,
-    };
+    return { success: false, message: `Restore failed and nothing was changed: ${err?.message || err}` };
   }
 }
 
@@ -404,7 +150,7 @@ export async function importCustomDietCsv(
     return {
       success: true,
       format: 'csv',
-      message: `Imported ${count} daily meal logs from CSV! 🥗`,
+      message: `Imported ${count} daily meal logs from CSV`,
       counts: { macros: count },
     };
   } catch (err: any) {
@@ -426,13 +172,9 @@ export async function smartImportFile(
 ): Promise<BackupResult> {
   const trimmed = content.trim();
 
-  // 1. If starts with '{' or '[', attempt JSON parse
+  // 1. JSON: a FitRack backup
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return await importFullJsonBackup(db, trimmed);
-    } catch (e: any) {
-      // Fallback
-    }
+    return importFullJsonBackup(db, trimmed);
   }
 
   // 2. If it's CSV

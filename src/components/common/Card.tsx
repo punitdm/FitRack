@@ -45,6 +45,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: borderRadius.xl,
     padding: spacing.md,
-    borderWidth: 1,
+    // Hairline, neutral: cards separate by surface tone, not by outline.
+    borderWidth: StyleSheet.hairlineWidth,
   },
 });

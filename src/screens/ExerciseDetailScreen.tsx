@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
   KeyboardAvoidingView,
@@ -11,6 +8,8 @@ import {
   Alert,
   PanResponder,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text, TextInput } from '../components/common/Typography';
 import {
   ArrowLeft,
   Timer,
@@ -25,7 +24,7 @@ import {
 } from 'lucide-react-native';
 import Svg, { Polyline, Circle, Line, Text as SvgText } from 'react-native-svg';
 import * as SQLite from 'expo-sqlite';
-import { useTheme, typography, borderRadius, spacing } from '../theme/theme';
+import { useTheme, typography, borderRadius, spacing, ThemeColors } from '../theme/theme';
 import {
   Exercise,
   ExerciseLog,
@@ -38,10 +37,15 @@ import {
   addExerciseSet,
   updateExerciseSet,
   deleteExerciseSet,
+  restoreExerciseSet,
 } from '../db/database';
 import { formatDisplayDate } from '../utils/dateUtils';
 import { PlateCalculatorModal } from '../components/workout/PlateCalculatorModal';
 
+import { haptics } from '../utils/haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUnits } from '../utils/units';
+import { notifyUndo } from '../utils/feedback';
 interface ExerciseDetailScreenProps {
   db: SQLite.SQLiteDatabase;
   exerciseItem: ExerciseWithLogs;
@@ -66,6 +70,11 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
   onShowToast,
 }) => {
   const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const u = useUnits();
+  // The weight field holds a number in the chosen unit; it's converted to kg when saved.
+  const showW = (kg: number) => (kg > 0 ? u.toDisplay(kg).toFixed(1) : '0.0');
+  const insets = useSafeAreaInsets();
   const { exercise, logs, supersetId, supersetJumpBetween } = exerciseItem;
 
   const [activeTab, setActiveTab] = useState<TabKey>('track');
@@ -81,7 +90,11 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
 
   // History & Graph states
   const [historySessions, setHistorySessions] = useState<{ date: string; logs: ExerciseLog[] }[]>([]);
-  const [progressionData, setProgressionData] = useState<ExerciseProgressionPoint[]>([]);
+  const [progressionRaw, setProgressionData] = useState<ExerciseProgressionPoint[]>([]);
+  const progressionData = useMemo(
+    () => progressionRaw.map((p) => ({ ...p, value: u.toDisplay(p.value) })),
+    [progressionRaw, u]
+  );
   const [graphMetric, setGraphMetric] = useState<'1rm' | 'max_weight' | 'volume'>('1rm');
   const [isPlateModalOpen, setIsPlateModalOpen] = useState(false);
 
@@ -140,18 +153,18 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
 
     if (logs.length > 0) {
       const last = logs[logs.length - 1];
-      setWeightKg(last.weight_kg > 0 ? (Math.round(last.weight_kg * 10) / 10).toFixed(1) : '0.0');
+      setWeightKg(showW(last.weight_kg));
       setReps(last.reps > 0 ? String(last.reps) : '0');
       setDistanceVal(last.distance_val ? String(last.distance_val) : '0');
       setTimeDuration(last.time_duration || '00:00:00');
     } else if (exerciseItem.previousSetInfo) {
       const prev = exerciseItem.previousSetInfo;
-      setWeightKg(prev.weight_kg > 0 ? (Math.round(prev.weight_kg * 10) / 10).toFixed(1) : '0.0');
+      setWeightKg(showW(prev.weight_kg));
       setReps(prev.reps > 0 ? String(prev.reps) : '0');
       setDistanceVal(prev.distance_val ? String(prev.distance_val) : '0');
       setTimeDuration(prev.time_duration || '00:00:00');
     } else {
-      setWeightKg(isWeightReps ? '40.0' : '0.0');
+      setWeightKg(isWeightReps ? (u.unit === 'lb' ? '90.0' : '40.0') : '0.0');
       setReps(isWeightReps ? '8' : '0');
       setDistanceVal('1.0');
       setTimeDuration('00:05:00');
@@ -159,19 +172,21 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
   };
 
   const handleWeightDelta = (delta: number) => {
+    haptics.select();
     const cur = parseFloat(weightKg) || 0;
     const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
     setWeightKg(next.toFixed(1));
   };
 
   const handleRepsDelta = (delta: number) => {
+    haptics.select();
     const cur = parseInt(reps, 10) || 0;
     const next = Math.max(0, cur + delta);
     setReps(String(next));
   };
 
   const handleSave = async () => {
-    const wNum = parseFloat(weightKg) || 0;
+    const wNum = u.fromDisplay(parseFloat(weightKg) || 0);
     const rNum = parseInt(reps, 10) || 0;
     const dNum = parseFloat(distanceVal) || 0;
 
@@ -241,7 +256,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
       prefillInputs();
     } else {
       setEditingLogId(log.id);
-      setWeightKg((Math.round(log.weight_kg * 10) / 10).toFixed(1));
+      setWeightKg(showW(log.weight_kg));
       setReps(String(log.reps));
       setDistanceVal(String(log.distance_val || 0));
       setTimeDuration(log.time_duration || '00:00:00');
@@ -250,26 +265,27 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
     }
   };
 
-  const handleDeleteSet = (logId: number) => {
-    Alert.alert('Delete Set', 'Are you sure you want to delete this set?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteExerciseSet(db, logId);
-          if (editingLogId === logId) setEditingLogId(null);
-          onDataChanged();
-          loadAllData();
-        },
-      },
-    ]);
+  // Delete straight away; Undo puts the set back in the same position.
+  const handleDeleteSet = async (logId: number) => {
+    const removed = logs.find((l) => l.id === logId);
+    haptics.tap();
+    await deleteExerciseSet(db, logId);
+    if (editingLogId === logId) setEditingLogId(null);
+    onDataChanged();
+    loadAllData();
+    if (removed) {
+      notifyUndo(`Set ${removed.set_number} deleted`, async () => {
+        await restoreExerciseSet(db, removed);
+        onDataChanged();
+        loadAllData();
+      });
+    }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: '#121316' }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* 1. TOP APP BAR */}
-      <View style={[styles.topAppBar, { backgroundColor: '#1A1B1F', borderBottomColor: '#26282E' }]}>
+      <View style={[styles.topAppBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity style={styles.appBarBack} onPress={onBack} activeOpacity={0.7}>
           <ArrowLeft size={22} color="#FFFFFF" />
         </TouchableOpacity>
@@ -300,13 +316,13 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
       </View>
 
       {/* 2. 3 CLEAN TABS: TRACK | HISTORY | GRAPH */}
-      <View style={[styles.tabNavRow, { backgroundColor: '#18191D', borderBottomColor: '#26282E' }]}>
+      <View style={[styles.tabNavRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[styles.tabNavItem, activeTab === 'track' && [styles.activeTabNavItem, { borderBottomColor: colors.primary }]]}
           onPress={() => setActiveTab('track')}
         >
           <Text style={[styles.tabNavText, activeTab === 'track' && { color: colors.primary, fontWeight: '800' }]}>
-            TRACK
+            Track
           </Text>
         </TouchableOpacity>
 
@@ -315,7 +331,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
           onPress={() => setActiveTab('history')}
         >
           <Text style={[styles.tabNavText, activeTab === 'history' && { color: colors.primary, fontWeight: '800' }]}>
-            HISTORY
+            History
           </Text>
         </TouchableOpacity>
 
@@ -324,7 +340,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
           onPress={() => setActiveTab('graph')}
         >
           <Text style={[styles.tabNavText, activeTab === 'graph' && { color: colors.primary, fontWeight: '800' }]}>
-            GRAPH
+            Graph
           </Text>
         </TouchableOpacity>
       </View>
@@ -337,7 +353,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
         <View {...tabPanResponder.panHandlers} style={{ flex: 1 }}>
           <ScrollView
             style={styles.scrollBody}
-            contentContainerStyle={styles.scrollBodyContent}
+            contentContainerStyle={[styles.scrollBodyContent, { paddingBottom: insets.bottom + 24 }]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
@@ -348,14 +364,14 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                 {isWeightReps && (
                   <View style={styles.fieldSection}>
                     <View style={[styles.fieldHeaderLine, { borderBottomColor: colors.primary }]}>
-                      <Text style={styles.fieldHeaderLabel}>WEIGHT (kgs)</Text>
+                      <Text style={styles.fieldHeaderLabel}>Weight ({u.label})</Text>
                     </View>
 
                     <View style={styles.stepperControlRow}>
                       <TouchableOpacity
                         style={styles.bigMinusButton}
-                        onPress={() => handleWeightDelta(-2.5)}
-                        onLongPress={() => handleWeightDelta(-5.0)}
+                        onPress={() => handleWeightDelta(-u.step)}
+                        onLongPress={() => handleWeightDelta(-u.bigStep)}
                         activeOpacity={0.6}
                       >
                         <Minus size={26} color="#FFFFFF" strokeWidth={3} />
@@ -371,8 +387,8 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
 
                       <TouchableOpacity
                         style={styles.bigPlusButton}
-                        onPress={() => handleWeightDelta(2.5)}
-                        onLongPress={() => handleWeightDelta(5.0)}
+                        onPress={() => handleWeightDelta(u.step)}
+                        onLongPress={() => handleWeightDelta(u.bigStep)}
                         activeOpacity={0.6}
                       >
                         <Plus size={26} color="#FFFFFF" strokeWidth={3} />
@@ -385,7 +401,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                 {isWeightReps && (
                   <View style={styles.fieldSection}>
                     <View style={[styles.fieldHeaderLine, { borderBottomColor: colors.primary }]}>
-                      <Text style={styles.fieldHeaderLabel}>REPS</Text>
+                      <Text style={styles.fieldHeaderLabel}>Reps</Text>
                     </View>
 
                     <View style={styles.stepperControlRow}>
@@ -453,7 +469,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                     </View>
 
                     <View style={[styles.fieldHeaderLine, { borderBottomColor: colors.primary, marginTop: 14 }]}>
-                      <Text style={styles.fieldHeaderLabel}>DURATION (HH:MM:SS)</Text>
+                      <Text style={styles.fieldHeaderLabel}>Duration (HH:MM:SS)</Text>
                     </View>
                     <TextInput
                       style={[styles.bigValueDisplay, { marginVertical: 8 }]}
@@ -467,7 +483,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                 {isTimeOnly && (
                   <View style={styles.fieldSection}>
                     <View style={[styles.fieldHeaderLine, { borderBottomColor: colors.primary }]}>
-                      <Text style={styles.fieldHeaderLabel}>TIME (MM:SS)</Text>
+                      <Text style={styles.fieldHeaderLabel}>Time (MM:SS)</Text>
                     </View>
                     <TextInput
                       style={[styles.bigValueDisplay, { marginVertical: 8 }]}
@@ -499,7 +515,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.saveActionText, { color: colors.textInverse }]}>
-                      {editingLogId ? 'SAVE EDIT' : 'SAVE'}
+                      {editingLogId ? 'Save edit' : 'SAVE'}
                     </Text>
                   </TouchableOpacity>
 
@@ -508,7 +524,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                     onPress={handleClear}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.clearActionText}>CLEAR</Text>
+                    <Text style={styles.clearActionText}>Clear</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -536,7 +552,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                         >
                           <MessageSquare
                             size={18}
-                            color={hasNote ? colors.primary : '#475569'}
+                            color={hasNote ? colors.primary: colors.borderLight}
                             fill={hasNote ? colors.primary : 'transparent'}
                           />
                         </TouchableOpacity>
@@ -549,14 +565,14 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                         {/* Weight Value */}
                         <Text style={styles.setRowWeight}>
                           {isWeightReps
-                            ? `${(Math.round(log.weight_kg * 10) / 10).toFixed(1)} kgs`
+                            ? `${u.toDisplay(log.weight_kg).toFixed(1)} ${u.label}`
                             : isDistanceTime
                             ? `${log.distance_val} km`
                             : log.time_duration}
                         </Text>
 
                         {/* Reps Value */}
-                        <Text style={[styles.setRowReps, { color: isSelected ? colors.primary : '#F1F5F9' }]}>
+                        <Text style={[styles.setRowReps, { color: isSelected ? colors.primary : colors.text }]}>
                           {isWeightReps ? `${log.reps} reps` : isDistanceTime ? log.time_duration : ''}
                         </Text>
 
@@ -592,7 +608,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                         <View key={s.id} style={styles.historySetItemRow}>
                           <Text style={styles.histItemSetNum}>{s.set_number}</Text>
                           <Text style={styles.histItemWeight}>
-                            {isWeightReps ? `${(Math.round(s.weight_kg * 10) / 10).toFixed(1)} kgs` : `${s.distance_val} km`}
+                            {isWeightReps ? `${u.toDisplay(s.weight_kg).toFixed(1)} ${u.label}` : `${s.distance_val} km`}
                           </Text>
                           <Text style={styles.histItemReps}>
                             {isWeightReps ? `${s.reps} reps` : s.time_duration}
@@ -699,7 +715,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                               <SvgText
                                 x={x}
                                 y={y - 9}
-                                fill={isMax ? '#FBBF24' : '#E2E8F0'}
+                                fill={isMax ? '#FBBF24' : colors.text}
                                 fontSize="11"
                                 fontWeight="800"
                                 textAnchor="middle"
@@ -713,9 +729,9 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                     ) : (
                       <View style={{ alignItems: 'center', paddingVertical: 20 }}>
                         <Text style={{ ...typography.mono, fontSize: 36, color: colors.primary, fontWeight: '900' }}>
-                          {progressionData[0]?.value} kg
+                          {progressionData[0]?.value} {u.label}
                         </Text>
-                        <Text style={{ ...typography.caption, color: '#94A3B8', marginTop: 4 }}>
+                        <Text style={{ ...typography.caption, color: colors.textSecondary, marginTop: 4 }}>
                           Recorded on {progressionData[0]?.displayDate}
                         </Text>
                       </View>
@@ -724,7 +740,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
                     <View style={styles.chartDatesRow}>
                       <Text style={styles.chartDateLabel}>{progressionData[0]?.displayDate}</Text>
                       <Text style={[styles.chartDateLabel, { color: colors.primary, fontWeight: '800' }]}>
-                        Best PR: {Math.max(...progressionData.map((p) => p.value))} kg 🏆
+                        Best: {Math.max(...progressionData.map((p) => p.value))} {u.label}
                       </Text>
                       <Text style={styles.chartDateLabel}>{progressionData[progressionData.length - 1]?.displayDate}</Text>
                     </View>
@@ -743,7 +759,7 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
       {/* Plate Calculator Sub-Modal */}
       <PlateCalculatorModal
         visible={isPlateModalOpen}
-        initialWeight={parseFloat(weightKg) || 60}
+        initialWeight={u.fromDisplay(parseFloat(weightKg) || 0) || 60}
         exerciseName={exercise.name}
         onClose={() => setIsPlateModalOpen(false)}
       />
@@ -751,7 +767,8 @@ export const ExerciseDetailScreen: React.FC<ExerciseDetailScreenProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -769,7 +786,7 @@ const styles = StyleSheet.create({
   appBarTitle: {
     ...typography.titleMedium,
     fontSize: 17,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     flex: 1,
     marginLeft: 8,
@@ -800,9 +817,9 @@ const styles = StyleSheet.create({
   tabNavText: {
     ...typography.caption,
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.1,
   },
   scrollBody: {
     flex: 1,
@@ -827,8 +844,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    color: '#E2E8F0',
-    letterSpacing: 0.6,
+    color: colors.text,
+    letterSpacing: 0.1,
   },
   stepperControlRow: {
     flexDirection: 'row',
@@ -839,7 +856,7 @@ const styles = StyleSheet.create({
   bigMinusButton: {
     width: 72,
     height: 50,
-    backgroundColor: '#262930',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
@@ -847,7 +864,7 @@ const styles = StyleSheet.create({
   bigPlusButton: {
     width: 72,
     height: 50,
-    backgroundColor: '#262930',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
@@ -855,27 +872,27 @@ const styles = StyleSheet.create({
   bigValueDisplay: {
     flex: 1,
     height: 50,
-    backgroundColor: '#18191D',
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#475569',
+    borderBottomColor: colors.borderLight,
     borderRadius: 12,
     ...typography.mono,
     fontSize: 28,
-    color: '#FFFFFF',
+    color: colors.text,
     textAlign: 'center',
     fontWeight: '700',
   },
   noteInputWrapper: {
-    backgroundColor: '#18191D',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.borderLight,
     marginVertical: 4,
   },
   noteInputText: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 13,
   },
   actionButtonsRow: {
@@ -895,12 +912,12 @@ const styles = StyleSheet.create({
     ...typography.titleSmall,
     fontSize: 14,
     fontWeight: '900',
-    letterSpacing: 0.8,
+    letterSpacing: 0.1,
   },
   clearActionButton: {
     flex: 1,
     height: 48,
-    backgroundColor: '#262930',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -908,13 +925,13 @@ const styles = StyleSheet.create({
   clearActionText: {
     ...typography.titleSmall,
     fontSize: 14,
-    color: '#E2E8F0',
+    color: colors.text,
     fontWeight: '900',
-    letterSpacing: 0.8,
+    letterSpacing: 0.1,
   },
   setsTableWrapper: {
     borderTopWidth: 1,
-    borderTopColor: '#26282E',
+    borderTopColor: colors.border,
     marginTop: 4,
   },
   setTableRow: {
@@ -923,7 +940,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#202227',
+    borderBottomColor: colors.border,
     borderRadius: 8,
   },
   setRowNoteBtn: {
@@ -933,7 +950,7 @@ const styles = StyleSheet.create({
   setRowNumber: {
     ...typography.titleSmall,
     fontSize: 16,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     width: 36,
     textAlign: 'center',
@@ -941,7 +958,7 @@ const styles = StyleSheet.create({
   setRowWeight: {
     ...typography.body,
     fontSize: 16,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     flex: 1,
     textAlign: 'center',
@@ -949,7 +966,7 @@ const styles = StyleSheet.create({
   setRowReps: {
     ...typography.body,
     fontSize: 16,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     width: 90,
     textAlign: 'right',
@@ -962,11 +979,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   historyGroupCard: {
-    backgroundColor: '#18191D',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#26282E',
+    borderColor: colors.border,
   },
   historyHeaderRow: {
     flexDirection: 'row',
@@ -974,14 +991,14 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#26282E',
+    borderBottomColor: colors.border,
     marginBottom: 6,
   },
   historyDateText: {
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    color: '#E2E8F0',
+    color: colors.text,
   },
   historySetItemRow: {
     flexDirection: 'row',
@@ -990,26 +1007,26 @@ const styles = StyleSheet.create({
   },
   histItemSetNum: {
     ...typography.caption,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     width: 30,
   },
   histItemWeight: {
     ...typography.body,
     fontSize: 14,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     flex: 1,
   },
   histItemReps: {
     ...typography.body,
     fontSize: 14,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
     width: 70,
   },
   histItemComment: {
     ...typography.caption,
-    color: '#64748B',
+    color: colors.textMuted,
   },
   graphContainer: {
     gap: 12,
@@ -1022,20 +1039,20 @@ const styles = StyleSheet.create({
   graphMetricPill: {
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#262930',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 16,
   },
   graphMetricText: {
     ...typography.caption,
     fontSize: 11,
-    color: '#E2E8F0',
+    color: colors.text,
   },
   chartWrapper: {
-    backgroundColor: '#18191D',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#26282E',
+    borderColor: colors.border,
     alignItems: 'center',
     width: '100%',
   },
@@ -1048,14 +1065,14 @@ const styles = StyleSheet.create({
   chartDateLabel: {
     ...typography.caption,
     fontSize: 10,
-    color: '#94A3B8',
+    color: colors.textSecondary,
   },
   emptyView: {
     alignItems: 'center',
     paddingVertical: 40,
   },
   emptyViewText: {
-    color: '#64748B',
+    color: colors.textMuted,
     fontSize: 13,
   },
 });

@@ -1,5 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View,
+  StyleSheet,
+} from 'react-native';
+import { TouchableOpacity } from './Touchable';
+import { Text } from './Typography';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Dumbbell, ShieldCheck } from 'lucide-react-native';
 import { useTheme, typography, spacing, borderRadius } from '../../theme/theme';
 import { formatDisplayDate, shiftDate, getTodayISO } from '../../utils/dateUtils';

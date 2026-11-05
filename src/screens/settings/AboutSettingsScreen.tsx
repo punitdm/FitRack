@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { TouchableOpacity } from '../../components/common/Touchable';
+import { Text } from '../../components/common/Typography';
 import { ArrowLeft, Info, Database, Trash2, Heart, Shield } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
 import { Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
+import { OpenSourceLicenses } from '../../components/common/OpenSourceLicenses';
+import appJson from '../../../app.json';
 import { getDatabaseSummary, clearAllUserData } from '../../db/database';
 
+import { confirmAction } from '../../utils/feedback';
 interface AboutSettingsScreenProps {
   db: SQLite.SQLiteDatabase;
   onBack: () => void;
@@ -39,22 +49,18 @@ export const AboutSettingsScreen: React.FC<AboutSettingsScreenProps> = ({
   };
 
   const handleResetData = () => {
-    Alert.alert(
-      '⚠️ Clear All User Data',
-      'This will erase all recorded workout sessions, sets, macro logs, and body stats. Built-in exercises and themes will remain intact.\n\nAre you sure?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Erase Everything',
-          style: 'destructive',
-          onPress: async () => {
-            await clearAllUserData(db);
-            await loadStats();
-            onShowToast('info', 'All user data cleared.');
-          },
-        },
-      ]
-    );
+    confirmAction({
+      title: 'Erase all your data?',
+      message:
+        'This deletes every workout, set, meal, run and body stat on this phone. Built-in exercises and your theme stay. Export a backup first if you might want it back.',
+      confirmLabel: 'Erase everything',
+      destructive: true,
+    }).then(async (ok) => {
+      if (!ok) return;
+      await clearAllUserData(db);
+      await loadStats();
+      onShowToast('info', 'All your data was erased');
+    });
   };
 
   return (
@@ -76,7 +82,7 @@ export const AboutSettingsScreen: React.FC<AboutSettingsScreenProps> = ({
             <Text style={{ fontSize: 32 }}>🏋️</Text>
           </View>
           <Text style={[styles.appName, { color: colors.text }]}>FitRack</Text>
-          <Text style={[styles.appVersion, { color: colors.textMuted }]}>Version 1.0.0 (Build 2026)</Text>
+          <Text style={[styles.appVersion, { color: colors.textMuted }]}>Version {appJson.expo.version}</Text>
           <Text style={[styles.appDesc, { color: colors.textSecondary }]}>
             A fast, 100% offline fitness, workout, macro & hydration tracking app built with React Native, Expo, and embedded SQLite.
           </Text>
@@ -108,6 +114,8 @@ export const AboutSettingsScreen: React.FC<AboutSettingsScreenProps> = ({
             </View>
           </View>
         </Card>
+
+        <OpenSourceLicenses />
 
         {/* Danger Zone: Reset Data */}
         <Card style={[styles.card, { backgroundColor: colors.surfaceCard, borderColor: colors.danger }]}>

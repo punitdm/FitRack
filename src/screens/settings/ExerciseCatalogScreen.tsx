@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   FlatList,
   StyleSheet,
   ScrollView,
   Alert,
 } from 'react-native';
+import { TouchableOpacity } from '../../components/common/Touchable';
+import { Text, TextInput } from '../../components/common/Typography';
 import { ArrowLeft, Search, Plus, Trash2, Dumbbell } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
 import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
@@ -22,6 +21,7 @@ import { CATEGORIES } from '../../db/seedData';
 import { Card } from '../../components/common/Card';
 import { Button } from '../../components/common/Button';
 
+import { confirmAction } from '../../utils/feedback';
 interface ExerciseCatalogScreenProps {
   db: SQLite.SQLiteDatabase;
   onBack: () => void;
@@ -78,18 +78,17 @@ export const ExerciseCatalogScreen: React.FC<ExerciseCatalogScreenProps> = ({
   };
 
   const handleDeleteCustom = (id: number, name: string) => {
-    Alert.alert('Delete Exercise', `Are you sure you want to delete custom exercise "${name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteCustomExercise(db, id);
-          await loadExercises();
-          onShowToast('info', `Deleted ${name}`);
-        },
-      },
-    ]);
+    confirmAction({
+      title: `Delete “${name}”?`,
+      message: 'It is removed from your exercise catalog.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    }).then(async (ok) => {
+      if (!ok) return;
+      await deleteCustomExercise(db, id);
+      await loadExercises();
+      onShowToast('info', `Deleted ${name}`);
+    });
   };
 
   return (
@@ -202,6 +201,17 @@ export const ExerciseCatalogScreen: React.FC<ExerciseCatalogScreenProps> = ({
         data={filteredExercises}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 60 }}
+        initialNumToRender={20}
+        windowSize={7}
+        keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={
+          <View style={{ alignItems: 'center', paddingVertical: 40, gap: 6 }}>
+            <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>No exercises match</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: 'center' }}>
+              Try another name or category, or add it as a custom exercise above.
+            </Text>
+          </View>
+        }
         renderItem={({ item }) => (
           <View style={[styles.exItemRow, { borderBottomColor: colors.border }]}>
             <View style={styles.exItemLeft}>
@@ -258,7 +268,7 @@ const styles = StyleSheet.create({
     margin: spacing.lg,
     padding: spacing.md,
     borderRadius: borderRadius.lg,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   addCardTitle: {
     ...typography.titleSmall,

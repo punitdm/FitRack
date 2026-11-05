@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
-  TextInput,
   Modal,
   Alert,
 } from 'react-native';
+import { TouchableOpacity } from '../components/common/Touchable';
+import { Text, TextInput } from '../components/common/Typography';
 import {
   ArrowLeft,
   Scale,
@@ -32,6 +31,9 @@ import { formatDisplayDate, shiftDate } from '../utils/dateUtils';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 
+import { PopIn } from '../components/common/Motion';
+import { useUnits } from '../utils/units';
+import { notify } from '../utils/feedback';
 interface BodyTrackerScreenProps {
   db: SQLite.SQLiteDatabase;
   selectedDate: string;
@@ -50,6 +52,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
   onShowToast,
 }) => {
   const { colors, isDark } = useTheme();
+  const u = useUnits();
 
   const [allStats, setAllStats] = useState<BodyStats[]>([]);
   const [currentDayStat, setCurrentDayStat] = useState<BodyStats | null>(null);
@@ -73,14 +76,14 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
       setCurrentDayStat(today);
 
       if (today?.weight_kg) {
-        setWeightKg(String(today.weight_kg));
+        setWeightKg(String(u.toDisplay(today.weight_kg)));
         setBodyFat(today.body_fat ? String(today.body_fat) : '');
         setChest(today.chest ? String(today.chest) : '');
         setWaist(today.waist ? String(today.waist) : '');
         setArm(today.arm ? String(today.arm) : '');
         setThigh(today.thigh ? String(today.thigh) : '');
       } else if (all.length > 0 && all[0].weight_kg) {
-        setWeightKg(String(all[0].weight_kg));
+        setWeightKg(String(u.toDisplay(all[0].weight_kg)));
         setBodyFat(all[0].body_fat ? String(all[0].body_fat) : '');
       }
     } catch (e) {
@@ -105,9 +108,9 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
   };
 
   const handleSaveWeighIn = async () => {
-    const wNum = parseFloat(weightKg);
+    const wNum = u.fromDisplay(parseFloat(weightKg));
     if (!wNum || wNum <= 0) {
-      Alert.alert('Invalid Weight', 'Please enter a valid weight in kg.');
+      notify('error', `Enter a valid weight in ${u.label}`);
       return;
     }
 
@@ -123,7 +126,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
 
     setIsLogModalOpen(false);
     loadData();
-    onShowToast('success', `Logged ${wNum} kg for ${selectedDate}`);
+    onShowToast('success', `Logged ${u.fmt(wNum)}`);
   };
 
   // Prepare chart points (sorted chronologically)
@@ -171,7 +174,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
         </View>
 
         <TouchableOpacity
-          style={[styles.quickAddBtn, { backgroundColor: isDark ? '#A855F720' : '#F3E8FF', borderColor: '#A855F7' }]}
+          style={[styles.quickAddBtn, { backgroundColor: colors.pillars.body.soft, borderColor: '#A855F7' }]}
           onPress={() => setIsLogModalOpen(true)}
           activeOpacity={0.7}
         >
@@ -185,15 +188,15 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
           style={[
             styles.heroCard,
             {
-              backgroundColor: isDark ? '#161124' : '#FAF5FF',
-              borderColor: isDark ? '#A855F7' : '#D8B4FE',
+              backgroundColor: colors.pillars.body.tint,
+              borderColor: colors.border,
             },
           ]}
         >
-          <Text style={[styles.heroSubHeader, { color: colors.textMuted }]}>CURRENT BODY WEIGHT</Text>
+          <Text style={[styles.heroSubHeader, { color: colors.textMuted }]}>Current body weight</Text>
           <Text style={[styles.heroWeightNum, { color: colors.text }]}>
-            {latestStat?.weight_kg ? latestStat.weight_kg : '--'}
-            <Text style={styles.heroWeightUnit}> kg</Text>
+            {latestStat?.weight_kg ? u.fmt(latestStat.weight_kg, { unit: false }) : '--'}
+            <Text style={styles.heroWeightUnit}> {u.label}</Text>
           </Text>
 
           <View style={styles.heroTrendRow}>
@@ -201,7 +204,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
               <View
                 style={[
                   styles.trendPill,
-                  { backgroundColor: isDark ? '#261C3D' : '#F3E8FF' },
+                  { backgroundColor: colors.pillars.body.soft },
                 ]}
               >
                 {changeWeek <= 0 ? (
@@ -215,7 +218,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                     { color: changeWeek <= 0 ? '#22C55E' : '#F59E0B' },
                   ]}
                 >
-                  {changeWeek > 0 ? `+${changeWeek}` : `${changeWeek}`} kg this week
+                  {changeWeek > 0 ? '+' : changeWeek < 0 ? '-' : ''}{u.fmt(Math.abs(changeWeek))} this week
                 </Text>
               </View>
             )}
@@ -231,12 +234,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
           style={[
             styles.chartSection,
             {
-              backgroundColor: isDark ? '#13111E' : '#FFFFFF',
+              backgroundColor: colors.surfaceCard,
               borderColor: colors.border,
             },
           ]}
         >
-          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>WEIGHT TREND (RECENT WEIGH-INS)</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Weight trend (recent weigh-ins)</Text>
 
           {weightPoints.length > 1 ? (
             <View style={styles.chartWrapper}>
@@ -249,7 +252,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                     y1={180 - 25 - pct * 120}
                     x2={310}
                     y2={180 - 25 - pct * 120}
-                    stroke={isDark ? '#2A203E' : '#E9D5FF'}
+                    stroke={colors.pillars.body.soft}
                     strokeDasharray="4 4"
                   />
                 ))}
@@ -283,7 +286,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
 
                   return (
                     <React.Fragment key={idx}>
-                      <Circle cx={x} cy={y} r={5} fill="#A855F7" stroke={isDark ? '#090D16' : '#FFFFFF'} strokeWidth={2} />
+                      <Circle cx={x} cy={y} r={5} fill="#A855F7" stroke={colors.surfaceCard} strokeWidth={2} />
                       <SvgText
                         x={x}
                         y={y - 8}
@@ -292,7 +295,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                         fontWeight="800"
                         textAnchor="middle"
                       >
-                        {d.weight_kg}
+                        {d.weight_kg ? u.fmt(d.weight_kg, { unit: false }) : ''}
                       </SvgText>
                     </React.Fragment>
                   );
@@ -318,12 +321,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
           style={[
             styles.tapeSection,
             {
-              backgroundColor: isDark ? '#13111E' : '#FFFFFF',
+              backgroundColor: colors.surfaceCard,
               borderColor: colors.border,
             },
           ]}
         >
-          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>TAPE MEASUREMENTS (CM)</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Tape measurements (cm)</Text>
 
           <View style={[styles.tapeRow, { borderBottomColor: colors.border }]}>
             <Text style={[styles.tapeLabel, { color: colors.textSecondary }]}>Chest</Text>
@@ -374,24 +377,24 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
       >
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.modalScroll}>
-            <View
+            <PopIn
               style={[
                 styles.modalContent,
                 {
-                  backgroundColor: isDark ? '#161124' : '#FFFFFF',
-                  borderColor: isDark ? '#A855F7' : '#D8B4FE',
+                  backgroundColor: colors.surfaceCard,
+                  borderColor: colors.border,
                 },
               ]}
             >
               <Text style={[styles.modalTitle, { color: colors.text }]}>Log Body Weigh-in</Text>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textMuted }]}>WEIGHT (KG)</Text>
+                <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Weight ({u.label})</Text>
                 <TextInput
                   style={[
                     styles.modalInput,
                     {
-                      backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                      backgroundColor: colors.background,
                       borderColor: colors.border,
                       color: colors.text,
                     },
@@ -406,12 +409,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
               </View>
 
               <View style={styles.modalField}>
-                <Text style={[styles.modalLabel, { color: colors.textMuted }]}>BODY FAT % (OPTIONAL)</Text>
+                <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Body fat % (optional)</Text>
                 <TextInput
                   style={[
                     styles.modalInput,
                     {
-                      backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                      backgroundColor: colors.background,
                       borderColor: colors.border,
                       color: colors.text,
                     },
@@ -425,17 +428,17 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
               </View>
 
               <Text style={[styles.modalSectionLabel, { color: '#A855F7' }]}>
-                TAPE MEASUREMENTS (CM)
+                Tape measurements (cm)
               </Text>
 
               <View style={styles.modalFieldDouble}>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>CHEST</Text>
+                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Chest</Text>
                   <TextInput
                     style={[
                       styles.modalInput,
                       {
-                        backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                        backgroundColor: colors.background,
                         borderColor: colors.border,
                         color: colors.text,
                       },
@@ -449,12 +452,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                 </View>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>WAIST</Text>
+                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Waist</Text>
                   <TextInput
                     style={[
                       styles.modalInput,
                       {
-                        backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                        backgroundColor: colors.background,
                         borderColor: colors.border,
                         color: colors.text,
                       },
@@ -470,12 +473,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
 
               <View style={styles.modalFieldDouble}>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>ARMS</Text>
+                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Arms</Text>
                   <TextInput
                     style={[
                       styles.modalInput,
                       {
-                        backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                        backgroundColor: colors.background,
                         borderColor: colors.border,
                         color: colors.text,
                       },
@@ -489,12 +492,12 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                 </View>
 
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>THIGHS</Text>
+                  <Text style={[styles.modalLabel, { color: colors.textMuted }]}>Thighs</Text>
                   <TextInput
                     style={[
                       styles.modalInput,
                       {
-                        backgroundColor: isDark ? '#0F0B18' : '#F8FAFC',
+                        backgroundColor: colors.background,
                         borderColor: colors.border,
                         color: colors.text,
                       },
@@ -512,7 +515,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.modalCancelBtn,
-                    { backgroundColor: isDark ? '#221933' : '#F1F5F9' },
+                    { backgroundColor: colors.pillars.body.soft },
                   ]}
                   onPress={() => setIsLogModalOpen(false)}
                 >
@@ -526,7 +529,7 @@ export const BodyTrackerScreen: React.FC<BodyTrackerScreenProps> = ({
                   <Text style={styles.modalSaveText}>Save Stats</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </PopIn>
           </ScrollView>
         </View>
       </Modal>
@@ -598,13 +601,13 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   heroSubHeader: {
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
   },
   heroWeightNum: {
     ...typography.mono,
@@ -651,7 +654,7 @@ const styles = StyleSheet.create({
     ...typography.titleSmall,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
     marginBottom: 10,
   },
   chartWrapper: {
@@ -722,7 +725,7 @@ const styles = StyleSheet.create({
   modalContent: {
     borderRadius: 24,
     padding: 20,
-    borderWidth: 1.5,
+    borderWidth: StyleSheet.hairlineWidth,
     gap: 12,
   },
   modalTitle: {
@@ -734,7 +737,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.1,
     marginTop: 4,
   },
   modalField: {
@@ -748,7 +751,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.1,
   },
   modalInput: {
     borderRadius: 12,

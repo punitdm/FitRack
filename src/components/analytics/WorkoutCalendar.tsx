@@ -1,5 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, PanResponder } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  PanResponder,
+} from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text } from '../common/Typography';
 import { ChevronLeft, ChevronRight, Calendar as CalIcon } from 'lucide-react-native';
 import {
   format,

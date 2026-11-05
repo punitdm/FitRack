@@ -6,12 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#090D16",
+    "backgroundColor": "#090A0D",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#090D16"
+      "backgroundColor": "#090A0D"
     },
     "ios": {
       "supportsTablet": true
@@ -21,7 +21,8 @@
       "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#090D16"
+        "backgroundColor": "#10151D",
+        "monochromeImage": "./assets/monochrome-icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -30,7 +31,17 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#090A0D"
+        }
+      ]
     ],
     "extra": {
       "eas": {

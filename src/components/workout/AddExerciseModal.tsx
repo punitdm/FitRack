@@ -1,13 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   FlatList,
   StyleSheet,
   ScrollView,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import {
   Search,
   Plus,

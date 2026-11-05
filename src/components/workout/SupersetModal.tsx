@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
   Modal,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import {
   X,
   Edit2,
@@ -17,7 +16,7 @@ import {
   Link2,
 } from 'lucide-react-native';
 import * as SQLite from 'expo-sqlite';
-import { useTheme, typography, borderRadius, spacing } from '../../theme/theme';
+import { useTheme, typography, borderRadius, spacing, ThemeColors } from '../../theme/theme';
 import { SupersetGroup, ExerciseWithLogs } from '../../types/database';
 import {
   saveSessionSuperset,
@@ -26,6 +25,7 @@ import {
   removeExercisesFromSuperset,
 } from '../../db/database';
 
+import { PopIn } from '../common/Motion';
 interface SupersetModalProps {
   visible: boolean;
   db: SQLite.SQLiteDatabase;
@@ -52,6 +52,7 @@ export const SupersetModal: React.FC<SupersetModalProps> = ({
   onShowToast,
 }) => {
   const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   // Mode: 'list' or 'edit'
   const [mode, setMode] = useState<'list' | 'edit'>('list');
@@ -155,8 +156,8 @@ export const SupersetModal: React.FC<SupersetModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={[styles.dialogCard, { backgroundColor: '#262930', borderColor: '#334155' }]}>
+      <PopIn style={styles.modalBackdrop}>
+        <View style={[styles.dialogCard, { backgroundColor: colors.surfaceCard, borderColor: colors.borderLight }]}>
           {/* ================= MODE 1: LIST SUPERSETS (Screenshot 4) ================= */}
           {mode === 'list' && (
             <View>
@@ -207,7 +208,7 @@ export const SupersetModal: React.FC<SupersetModalProps> = ({
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.dialogActionBtn} onPress={handleOpenNew}>
-                  <Text style={[styles.dialogActionText, { color: '#38BDF8', fontWeight: '800' }]}>New</Text>
+                  <Text style={[styles.dialogActionText, { color: colors.secondary, fontWeight: '800' }]}>New</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -305,18 +306,19 @@ export const SupersetModal: React.FC<SupersetModalProps> = ({
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.dialogActionBtn} onPress={handleSaveEdit}>
-                  <Text style={[styles.dialogActionText, { color: '#38BDF8', fontWeight: '800' }]}>Save</Text>
+                  <Text style={[styles.dialogActionText, { color: colors.secondary, fontWeight: '800' }]}>Save</Text>
                 </TouchableOpacity>
               </View>
             </View>
           )}
         </View>
-      </View>
+      </PopIn>
     </Modal>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -334,14 +336,14 @@ const styles = StyleSheet.create({
   dialogTitle: {
     ...typography.titleMedium,
     fontSize: 18,
-    color: '#38BDF8',
+    color: colors.secondary,
     fontWeight: '800',
     marginBottom: 4,
   },
   dialogSub: {
     ...typography.caption,
     fontSize: 12,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginBottom: spacing.md,
     lineHeight: 16,
   },
@@ -352,12 +354,12 @@ const styles = StyleSheet.create({
   supersetListItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E2025',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 4,
     marginBottom: 8,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.borderLight,
   },
   verticalColorBar: {
     width: 6,
@@ -372,13 +374,13 @@ const styles = StyleSheet.create({
   ssItemName: {
     ...typography.titleSmall,
     fontSize: 14,
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   ssItemExercises: {
     ...typography.caption,
     fontSize: 11,
-    color: '#94A3B8',
+    color: colors.textSecondary,
     marginTop: 2,
     lineHeight: 15,
   },
@@ -391,12 +393,12 @@ const styles = StyleSheet.create({
   },
   emptySsText: {
     ...typography.caption,
-    color: '#64748B',
+    color: colors.textMuted,
   },
   dialogButtonsRow: {
     flexDirection: 'row',
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: colors.borderLight,
     marginTop: spacing.md,
     paddingTop: spacing.sm,
   },
@@ -409,7 +411,7 @@ const styles = StyleSheet.create({
   dialogActionText: {
     ...typography.titleSmall,
     fontSize: 14,
-    color: '#E2E8F0',
+    color: colors.text,
     fontWeight: '600',
   },
   nameColorRow: {
@@ -427,8 +429,8 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 38,
     borderBottomWidth: 1,
-    borderBottomColor: '#64748B',
-    color: '#FFFFFF',
+    borderBottomColor: colors.borderLight,
+    color: colors.text,
     fontSize: 16,
     paddingVertical: 4,
   },
@@ -447,7 +449,7 @@ const styles = StyleSheet.create({
   },
   colorSwatchSelected: {
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: colors.text,
   },
   checkboxRow: {
     flexDirection: 'row',
@@ -460,23 +462,23 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 3,
     borderWidth: 1.5,
-    borderColor: '#64748B',
+    borderColor: colors.borderLight,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxBoxChecked: {
-    backgroundColor: '#38BDF8',
-    borderColor: '#38BDF8',
+    backgroundColor: colors.secondary,
+    borderColor: colors.secondary,
   },
   checkboxLabel: {
     flex: 1,
     ...typography.body,
     fontSize: 13,
-    color: '#FFFFFF',
+    color: colors.text,
   },
   exercisesInSsBox: {
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: colors.borderLight,
     marginVertical: spacing.sm,
     paddingTop: 4,
     maxHeight: 120,
@@ -490,7 +492,7 @@ const styles = StyleSheet.create({
   exInSsName: {
     ...typography.caption,
     fontSize: 13,
-    color: '#E2E8F0',
+    color: colors.text,
     flex: 1,
   },
   removeExBtn: {

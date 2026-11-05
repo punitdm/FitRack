@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
   FlatList,
 } from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text } from '../common/Typography';
 import {
   Calendar,
   CheckSquare,
@@ -29,6 +29,7 @@ import {
 } from '../../db/database';
 import { formatDisplayDate, formatShortDate } from '../../utils/dateUtils';
 
+import { useUnits } from '../../utils/units';
 interface CopyWorkoutModalProps {
   visible: boolean;
   db: SQLite.SQLiteDatabase;
@@ -45,6 +46,7 @@ export const CopyWorkoutModal: React.FC<CopyWorkoutModalProps> = ({
   onSuccess,
 }) => {
   const { colors } = useTheme();
+  const u = useUnits();
 
   const [step, setStep] = useState<'dates' | 'preview'>('dates');
   const [pastWorkouts, setPastWorkouts] = useState<PastWorkoutSummary[]>([]);
@@ -262,7 +264,7 @@ export const CopyWorkoutModal: React.FC<CopyWorkoutModalProps> = ({
                             Set {s.setNumber}:
                           </Text>
                           <Text style={[styles.setDetailText, { color: colors.text }]}>
-                            {s.weightKg > 0 ? `${s.weightKg} kg × ${s.reps} reps` : `${s.reps} reps`}
+                            {s.weightKg > 0 ? `${u.fmt(s.weightKg)} × ${s.reps} reps` : `${s.reps} reps`}
                           </Text>
                         </View>
                         {s.difficulty && (

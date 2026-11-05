@@ -25,9 +25,9 @@ export const borderRadius = {
 
 export const typography = {
   titleLarge: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '800' as const,
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   titleMedium: {
     fontSize: 18,
@@ -37,16 +37,25 @@ export const typography = {
   titleSmall: {
     fontSize: 15,
     fontWeight: '600' as const,
+    letterSpacing: -0.1,
   },
   body: {
-    fontSize: 14,
+    fontSize: 15,
+    lineHeight: 21,
   },
   bodySecondary: {
     fontSize: 13,
+    lineHeight: 18,
   },
   caption: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600' as const,
+  },
+  /** Small section label (sentence case, not ALL CAPS). */
+  label: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    letterSpacing: 0.1,
   },
   mono: {
     fontSize: 14,

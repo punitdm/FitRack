@@ -1,5 +1,11 @@
 import React from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+} from 'react-native';
+import { TouchableOpacity } from '../common/Touchable';
+import { Text, TextInput } from '../common/Typography';
 import { Utensils, Plus } from 'lucide-react-native';
 import { colors, typography, borderRadius, spacing } from '../../theme/theme';
 import { Card } from '../common/Card';
