@@ -24,7 +24,7 @@ export const ConsistencyCard: React.FC<{ data: ProgressData; onOpenDay: (date: s
   const [all, setAll] = useState(false);
   const [width, setWidth] = useState(0);
   const [day, setDay] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   const weeks = all ? yearWeeks(data) : HEATMAP_WEEKS;
   const grid = useMemo(() => heatmap(data, weeks), [data, weeks]);

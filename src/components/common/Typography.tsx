@@ -71,12 +71,12 @@ function withAppFont(style: StyleProp<TextStyle>, nested: boolean): StyleProp<Te
   return { ...rest, fontFamily };
 }
 
-export const Text = forwardRef<RNText, TextProps>(function AppText({ style, ...rest }, ref) {
+export const Text = forwardRef<React.ComponentRef<typeof RNText>, TextProps>(function AppText({ style, ...rest }, ref) {
   const nested = useContext(NestedText);
   const text = <RNText ref={ref} {...rest} style={withAppFont(style, nested)} />;
   return nested ? text : <NestedText.Provider value>{text}</NestedText.Provider>;
 });
 
-export const TextInput = forwardRef<RNTextInput, TextInputProps>(function AppTextInput({ style, ...rest }, ref) {
+export const TextInput = forwardRef<React.ComponentRef<typeof RNTextInput>, TextInputProps>(function AppTextInput({ style, ...rest }, ref) {
   return <RNTextInput ref={ref} {...rest} style={withAppFont(style, false)} />;
 });

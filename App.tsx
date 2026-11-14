@@ -32,6 +32,7 @@ import { ConfirmSheet } from './src/components/common/ConfirmSheet';
 import { ConfirmRequest, ToastRequest, setConfirmListener, setToastListener } from './src/utils/feedback';
 import { Modal } from './src/components/common/Modal';
 import { AppTabBar } from './src/components/common/AppTabBar';
+import { TabBlurTarget } from './src/components/common/blurTargets';
 import { WorkoutCalendar } from './src/components/analytics/WorkoutCalendar';
 
 import { HubScreen } from './src/screens/HubScreen';
@@ -258,6 +259,7 @@ function TabsRoute() {
       initialRouteName="hub"
       backBehavior="firstRoute"
       tabBar={(props) => <AppTabBar {...props} />}
+      screenLayout={({ route, children }) => <TabBlurTarget routeKey={route.key}>{children}</TabBlurTarget>}
       screenOptions={{ headerShown: false, animation: 'shift', lazy: true }}
     >
       <Tab.Screen name="hub" component={HubRoute} />
@@ -406,7 +408,7 @@ function MainApp({ db }: { db: SQLite.SQLiteDatabase | null }) {
   if (!appState || onboarding === 'checking') {
     return (
       <View style={[styles.splashContainer, { backgroundColor: colors.background }]}>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.background} translucent={false} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <View style={[styles.splashIcon, { backgroundColor: colors.primaryMuted }]}>
           <Dumbbell size={42} color={colors.primary} />
         </View>
@@ -422,7 +424,7 @@ function MainApp({ db }: { db: SQLite.SQLiteDatabase | null }) {
   if (onboarding === 'show') {
     return (
       <SafeAreaView style={[styles.rootContainer, { backgroundColor: colors.background }]} edges={['top', 'bottom', 'left', 'right']}>
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.background} translucent={false} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <OnboardingScreen
           db={appState.db}
           onDone={(openImport) => {
@@ -440,7 +442,7 @@ function MainApp({ db }: { db: SQLite.SQLiteDatabase | null }) {
         style={[styles.rootContainer, { backgroundColor: colors.background }]}
         edges={['top', 'left', 'right']}
       >
-        <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.background} translucent={false} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
         <NavigationContainer
           ref={navRef}

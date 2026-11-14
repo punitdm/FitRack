@@ -53,7 +53,7 @@ export const OnboardingScreen: React.FC<{ db: SQLite.SQLiteDatabase; onDone: (op
   const [kcalText, setKcalText] = useState(String(DEFAULT_GOALS.calories));
   const [proteinText, setProteinText] = useState(String(DEFAULT_GOALS.protein));
   const [saving, setSaving] = useState(false);
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   const num = (t: string) => {
     const n = parseFloat(t.replace(',', '.'));

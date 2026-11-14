@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, TextInput } from '../common/Typography';
 import { Modal } from '../common/Modal';
@@ -10,7 +10,7 @@ import { NutritionGoals } from '../../db/nutrition';
 // Shared field
 // ---------------------------------------------------------------------------
 
-const Field: React.FC<{
+type FieldProps = {
   label: string;
   value: string;
   onChangeText: (v: string) => void;
@@ -19,13 +19,24 @@ const Field: React.FC<{
   keyboardType?: 'decimal-pad' | 'number-pad' | 'default';
   autoFocus?: boolean;
   flex?: boolean;
-}> = ({ label, value, onChangeText, placeholder, suffix, keyboardType = 'decimal-pad', autoFocus, flex = true }) => {
+  /** Field the keyboard's Enter key moves to. Without one, Enter closes the keyboard. */
+  next?: React.RefObject<FieldRef | null>;
+};
+type FieldRef = React.ComponentRef<typeof TextInput>;
+
+const Field = forwardRef<FieldRef, FieldProps>(function Field(
+  { label, value, onChangeText, placeholder, suffix, keyboardType = 'decimal-pad', autoFocus, flex = true, next },
+  ref,
+) {
   const { colors } = useTheme();
   return (
     <View style={[styles.field, flex && { flex: 1 }]}>
       <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{label}</Text>
       <View style={[styles.inputWrap, { backgroundColor: colors.background, borderColor: colors.border }]}>
+        {/* No selectTextOnFocus: on Android it can re-select the text after the
+            first keystroke, so the next digit replaced it ("25" became "5"). */}
         <TextInput
+          ref={ref}
           style={[styles.input, { color: colors.text }]}
           value={value}
           onChangeText={onChangeText}
@@ -33,13 +44,15 @@ const Field: React.FC<{
           placeholderTextColor={colors.textDisabled}
           keyboardType={keyboardType}
           autoFocus={autoFocus}
-          selectTextOnFocus
+          returnKeyType={next ? 'next' : 'done'}
+          submitBehavior={next ? 'submit' : 'blurAndSubmit'}
+          onSubmitEditing={next ? () => next.current?.focus() : undefined}
         />
         {!!suffix && <Text style={[styles.suffix, { color: colors.textMuted }]}>{suffix}</Text>}
       </View>
     </View>
   );
-};
+});
 
 const n = (v: string) => {
   const x = parseFloat(v.replace(',', '.'));
@@ -70,6 +83,10 @@ export const QuickAddSheet: React.FC<{
   const [protein, setProtein] = useState('');
   const [carbs, setCarbs] = useState('');
   const [fat, setFat] = useState('');
+  const kcalRef = useRef<FieldRef>(null);
+  const proteinRef = useRef<FieldRef>(null);
+  const carbsRef = useRef<FieldRef>(null);
+  const fatRef = useRef<FieldRef>(null);
 
   useEffect(() => {
     if (visible) {
@@ -95,8 +112,10 @@ export const QuickAddSheet: React.FC<{
           placeholder="e.g. Homemade dal"
           keyboardType="default"
           flex={false}
+          next={kcalRef}
         />
         <Field
+          ref={kcalRef}
           label="Calories"
           value={kcal}
           onChangeText={setKcal}
@@ -104,11 +123,12 @@ export const QuickAddSheet: React.FC<{
           suffix="kcal"
           keyboardType="number-pad"
           flex={false}
+          next={proteinRef}
         />
         <View style={styles.row}>
-          <Field label="Protein" value={protein} onChangeText={setProtein} placeholder="0" suffix="g" />
-          <Field label="Carbs" value={carbs} onChangeText={setCarbs} placeholder="0" suffix="g" />
-          <Field label="Fat" value={fat} onChangeText={setFat} placeholder="0" suffix="g" />
+          <Field ref={proteinRef} label="Protein" value={protein} onChangeText={setProtein} placeholder="0" suffix="g" next={carbsRef} />
+          <Field ref={carbsRef} label="Carbs" value={carbs} onChangeText={setCarbs} placeholder="0" suffix="g" next={fatRef} />
+          <Field ref={fatRef} label="Fat" value={fat} onChangeText={setFat} placeholder="0" suffix="g" />
         </View>
         {n(kcal) === 0 && fromMacros > 0 && (
           <Text style={[styles.hint, { color: colors.textMuted }]}>
@@ -151,6 +171,10 @@ export const GoalsSheet: React.FC<{
   const [carbs, setCarbs] = useState('');
   const [fat, setFat] = useState('');
   const [water, setWater] = useState('');
+  const gProtein = useRef<FieldRef>(null);
+  const gCarbs = useRef<FieldRef>(null);
+  const gFat = useRef<FieldRef>(null);
+  const gWater = useRef<FieldRef>(null);
 
   useEffect(() => {
     if (visible) {
@@ -168,17 +192,17 @@ export const GoalsSheet: React.FC<{
   return (
     <Modal visible={visible} onClose={onClose} title="Daily goals">
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetBody}>
-        <Field label="Calories" value={kcal} onChangeText={setKcal} suffix="kcal" keyboardType="number-pad" flex={false} />
+        <Field label="Calories" value={kcal} onChangeText={setKcal} suffix="kcal" keyboardType="number-pad" flex={false} next={gProtein} />
         <View style={styles.row}>
-          <Field label="Protein" value={protein} onChangeText={setProtein} suffix="g" />
-          <Field label="Carbs" value={carbs} onChangeText={setCarbs} suffix="g" />
-          <Field label="Fat" value={fat} onChangeText={setFat} suffix="g" />
+          <Field ref={gProtein} label="Protein" value={protein} onChangeText={setProtein} suffix="g" next={gCarbs} />
+          <Field ref={gCarbs} label="Carbs" value={carbs} onChangeText={setCarbs} suffix="g" next={gFat} />
+          <Field ref={gFat} label="Fat" value={fat} onChangeText={setFat} suffix="g" next={gWater} />
         </View>
         <Text style={[styles.hint, { color: Math.abs(diff) > 100 ? colors.warning : colors.textMuted }]}>
           Your macros add up to {macroKcal} kcal
           {Math.abs(diff) > 100 ? ` (${diff > 0 ? '+' : ''}${Math.round(diff)} vs your calorie goal)` : '.'}
         </Text>
-        <Field label="Water" value={water} onChangeText={setWater} suffix="litres" flex={false} />
+        <Field ref={gWater} label="Water" value={water} onChangeText={setWater} suffix="litres" flex={false} />
         <Button
           title="Save goals"
           size="lg"

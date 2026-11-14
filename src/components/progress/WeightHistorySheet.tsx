@@ -63,7 +63,7 @@ export const WeightHistorySheet: React.FC<WeightHistorySheetProps> = ({
   const [goalText, setGoalText] = useState('');
   const [logging, setLogging] = useState(false);
   const [logText, setLogText] = useState('');
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const line = colors.pillars.running.accent;
 
   const latest = weights[weights.length - 1] ?? null;

@@ -1,8 +1,8 @@
 # 🏋️ FitRack — 100% Offline Fitness, Workout & Macro Tracker
 
-[![React Native](https://img.shields.io/badge/React%20Native-0.76-blue.svg)](https://reactnative.dev/)
-[![Expo SDK](https://img.shields.io/badge/Expo%20SDK-54-black.svg)](https://expo.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6.svg)](https://www.typescriptlang.org/)
+[![React Native](https://img.shields.io/badge/React%20Native-0.88-blue.svg)](https://reactnative.dev/)
+[![Expo SDK](https://img.shields.io/badge/Expo%20SDK-58-black.svg)](https://expo.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6.svg)](https://www.typescriptlang.org/)
 [![SQLite](https://img.shields.io/badge/Storage-100%25%20Offline%20SQLite-003B57.svg)](https://docs.expo.dev/versions/latest/sdk/sqlite/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -96,7 +96,7 @@ Zero cloud dependencies. Zero logins required. 100% of your data stays on your d
 
 ## 🛠️ Tech Stack
 
-- **Core**: React Native (Expo SDK 54)
+- **Core**: React Native (Expo SDK 58)
 - **Language**: TypeScript
 - **Database**: `expo-sqlite` (Native embedded SQLite)
 - **Safe Area**: `react-native-safe-area-context`

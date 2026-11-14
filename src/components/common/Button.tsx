@@ -92,7 +92,7 @@ export const Button: React.FC<ButtonProps> = ({
     }
 
     if (disabled || loading) {
-      base.opacity = 0.5;
+      base = { ...base, opacity: 0.5 };
     }
 
     return base;

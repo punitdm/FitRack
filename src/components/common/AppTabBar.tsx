@@ -18,6 +18,7 @@ import { House, ChartColumnBig, Dumbbell, Apple, UserRound } from 'lucide-react-
 import { useTheme } from '../../theme/theme';
 import { haptics } from '../../utils/haptics';
 import { prefersReducedMotion } from './Motion';
+import { useBlurTarget } from './blurTargets';
 
 /**
  * Floating capsule navbar: Home · Progress · [Workout] · Nutrition · Profile.
@@ -51,6 +52,8 @@ const SETTLE = Easing.bezier(0.3, 1.25, 0.5, 1);
 export const AppTabBar: React.FC<BottomTabBarProps> = ({ state, descriptors, navigation }) => {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
+  // Android blurs the open tab's screen (see blurTargets.tsx).
+  const blurTarget = useBlurTarget(state.routes[state.index].key);
   const [rowW, setRowW] = useState(0);
   const slotW = rowW > 0 ? rowW / state.routes.length : 0;
   const pillW = Math.max(0, slotW - 6);
@@ -157,7 +160,8 @@ export const AppTabBar: React.FC<BottomTabBarProps> = ({ state, descriptors, nav
           <BlurView
             intensity={isDark ? 50 : 60}
             tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-            experimentalBlurMethod={ANDROID_BLUR}
+            blurTarget={blurTarget}
+            blurMethod={blurTarget ? ANDROID_BLUR : 'none'}
             blurReductionFactor={4}
             style={StyleSheet.absoluteFill}
           />

@@ -98,7 +98,7 @@ export const SettingsHome: React.FC<SettingsHomeProps> = ({ onBack, onOpen }) =>
   const { width } = useWindowDimensions();
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
-  const inputRef = useRef<RNTextInput>(null);
+  const inputRef = useRef<React.ComponentRef<typeof RNTextInput>>(null);
 
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const y = useSharedValue(0);

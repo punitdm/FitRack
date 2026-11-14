@@ -1,12 +1,14 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal as RNModal,
   View,
   StyleSheet,
   Pressable,
-  KeyboardAvoidingView,
+  Keyboard,
+  KeyboardEvent,
   Platform,
   Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import { TouchableOpacity } from './Touchable';
 import { Text } from './Typography';
@@ -55,6 +57,41 @@ export const Modal: React.FC<ModalProps> = ({ visible, onClose, title, children 
   const translateY = useSharedValue(SCREEN_H);
   const backdrop = useSharedValue(0);
 
+  // Keyboard: a translucent Android modal doesn't get resized for the keyboard,
+  // so lift the sheet by exactly how much the keyboard overlaps it.
+  const { height: windowH } = useWindowDimensions();
+  const rootRef = useRef<React.ComponentRef<typeof View>>(null);
+  const keyboardLift = useSharedValue(0);
+  const [keyboardH, setKeyboardH] = useState(0);
+  useEffect(() => {
+    if (!mounted) return;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e: KeyboardEvent) => {
+      const top = e.endCoordinates.screenY;
+      const duration = Platform.OS === 'ios' ? e.duration || 250 : 160;
+      rootRef.current?.measureInWindow((_x, y, _w, h) => {
+        const overlap = Math.max(0, y + h - top);
+        const lift = Math.round(overlap > 0 ? overlap : e.endCoordinates.height);
+        // Moving between fields re-fires this; skip the re-render if nothing moved.
+        setKeyboardH((prev) => (Math.abs(prev - lift) < 2 ? prev : lift));
+        keyboardLift.value = withTiming(lift, { duration, easing: Easing.out(Easing.cubic) });
+      });
+    };
+    const onHide = (e?: KeyboardEvent) => {
+      setKeyboardH(0);
+      keyboardLift.value = withTiming(0, { duration: Platform.OS === 'ios' ? e?.duration || 250 : 160, easing: Easing.out(Easing.cubic) });
+    };
+    const a = Keyboard.addListener(showEvt, onShow);
+    const b = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      a.remove();
+      b.remove();
+      keyboardLift.value = 0;
+      setKeyboardH(0);
+    };
+  }, [mounted, keyboardLift]);
+
   useEffect(() => {
     if (!mounted) return;
     const reduce = prefersReducedMotion();
@@ -84,7 +121,7 @@ export const Modal: React.FC<ModalProps> = ({ visible, onClose, title, children 
     });
 
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    transform: [{ translateY: translateY.value - keyboardLift.value }],
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     // Fade the dim with the backdrop value, and lighten it as the sheet is dragged away.
@@ -95,8 +132,8 @@ export const Modal: React.FC<ModalProps> = ({ visible, onClose, title, children 
     <RNModal visible={mounted} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
       {/* Gestures inside an RN Modal need their own root on Android. */}
       <GestureHandlerRootView style={styles.fill}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.fill}>
-          <View style={styles.root}>
+        <View style={styles.fill}>
+          <View style={styles.root} ref={rootRef} collapsable={false}>
             <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, backdropStyle]}>
               <Pressable style={styles.fill} onPress={onClose} accessibilityLabel="Close" />
             </Animated.View>
@@ -106,7 +143,10 @@ export const Modal: React.FC<ModalProps> = ({ visible, onClose, title, children 
                 styles.sheet,
                 {
                   backgroundColor: colors.surfaceCard,
-                  paddingBottom: Math.max(insets.bottom, spacing.md),
+                  // Above the keyboard the home-indicator inset isn't needed.
+                  paddingBottom: keyboardH > 0 ? spacing.md : Math.max(insets.bottom, spacing.md),
+                  // Keep the whole sheet on screen above the keyboard; its content scrolls.
+                  maxHeight: keyboardH > 0 ? Math.max(220, windowH - keyboardH - insets.top - 12) : '90%',
                 },
                 sheetStyle,
               ]}
@@ -137,7 +177,7 @@ export const Modal: React.FC<ModalProps> = ({ visible, onClose, title, children 
               <View style={styles.content}>{children}</View>
             </Animated.View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </GestureHandlerRootView>
     </RNModal>
   );
